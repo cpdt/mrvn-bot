@@ -1,0 +1,7 @@
+[workspace]
+
+members = [
+    "mrvn-back-ytdl",
+    "mrvn-front-discord",
+    "mrvn-model"
+]
