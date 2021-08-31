@@ -31,7 +31,7 @@ impl Song {
 
         let title = info.title;
         let url = info.webpage_url.ok_or(Error::NoSongsFound)?;
-        let source = songbird::ytdl(&url).await.map_err(Error::Songbird)?;
+        let source = songbird::ytdl(&url).await.map_err(Error::SongbirdInput)?;
 
         Ok(Song {
             title,
@@ -46,5 +46,9 @@ impl Song {
 
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    pub fn source(self) -> songbird::input::Input {
+        self.source
     }
 }

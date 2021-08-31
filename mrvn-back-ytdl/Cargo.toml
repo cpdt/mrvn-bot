@@ -6,18 +6,20 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-url = "2.2.2"
-youtube_dl = "0.6.2"
+dashmap = "4.0"
+futures = "0.3"
+url = "2.2"
+youtube_dl = "0.6"
 
 [dependencies.serenity]
-version = "0.10.9"
+version = "0.10"
 default-features = false
 features = ["cache", "client", "gateway", "rustls_backend", "model", "unstable_discord_api", "voice"]
 
 [dependencies.songbird]
-version = "0.2.0"
+version = "0.2"
 features = ["gateway", "serenity-rustls"]
 
 [dependencies.tokio]
-version = "1.10.1"
+version = "1.10"
 features = ["macros", "rt-multi-thread"]

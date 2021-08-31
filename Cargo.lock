@@ -775,6 +775,8 @@ dependencies = [
 name = "mrvn-back-ytdl"
 version = "0.1.0"
 dependencies = [
+ "dashmap",
+ "futures",
  "serenity",
  "songbird",
  "tokio",

@@ -1,10 +1,12 @@
 use serenity::{prelude::*, model::prelude::*};
 use futures::prelude::*;
+use mrvn_back_ytdl::speaker::SpeakerInit;
 
 mod command_handler;
 mod commands;
 mod config;
 mod error;
+mod frontend;
 mod model_delegate;
 mod voice_handler;
 
@@ -27,18 +29,7 @@ async fn main() {
     let config_file = std::fs::File::open(config_file_path).expect("Unable to open config file");
     let config: config::Config = serde_json::from_reader(config_file).expect("Unable to read config file");
 
-    let mut command_client = Client::builder(&config.command_bot.token)
-        .application_id(config.command_bot.application_id)
-        .event_handler(command_handler::CommandHandler {
-            model: mrvn_model::app_model::AppModel::new(),
-        })
-        .await
-        .expect("Unable to create command client");
-    commands::register_commands(
-        &command_client.cache_and_http.http,
-        config.command_bot.guild_id.map(GuildId)
-    ).await.expect("Unable to register commands");
-    log::info!("Finished registering application commands");
+    let mut frontend = frontend::Frontend::new();
 
     log::info!("Starting {} voice clients", config.voice_bots.len());
     let mut voice_clients = future::try_join_all(config
@@ -51,7 +42,19 @@ async fn main() {
                 .event_handler(voice_handler::VoiceHandler {
                     client_index: index,
                 })
+                .register_speaker(frontend.backend_mut())
         })).await.expect("Unable to create voice client");
+
+    let mut command_client = Client::builder(&config.command_bot.token)
+        .application_id(config.command_bot.application_id)
+        .event_handler(command_handler::CommandHandler::new(frontend))
+        .await
+        .expect("Unable to create command client");
+    commands::register_commands(
+        &command_client.cache_and_http.http,
+        config.command_bot.guild_id.map(GuildId)
+    ).await.expect("Unable to register commands");
+    log::info!("Finished registering application commands");
 
     futures::try_join!(
         command_client.start(),

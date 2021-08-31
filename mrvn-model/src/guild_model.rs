@@ -22,6 +22,7 @@ struct ChannelModel {
 }
 
 pub struct GuildModel<QueueEntry> {
+    message_channel: Option<ChannelId>,
     queues: Vec<Queue<QueueEntry>>,
     channels: HashMap<ChannelId, ChannelModel>,
 }
@@ -29,12 +30,21 @@ pub struct GuildModel<QueueEntry> {
 impl<QueueEntry> GuildModel<QueueEntry> {
     pub fn new() -> Self {
         GuildModel {
+            message_channel: None,
             queues: Vec::new(),
             channels: HashMap::new(),
         }
     }
 
+    pub fn message_channel(&self) -> Option<ChannelId> {
+        self.message_channel
+    }
+
     // User commands:
+    pub fn set_message_channel(&mut self, message_channel: Option<ChannelId>) {
+        self.message_channel = message_channel;
+    }
+
     pub fn push_entry(&mut self, user_id: UserId, entry: QueueEntry) {
         self.create_user_queue(user_id).entries.push_back(entry);
     }
