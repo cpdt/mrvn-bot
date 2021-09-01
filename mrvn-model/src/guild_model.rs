@@ -72,7 +72,7 @@ impl<QueueEntry> GuildModel<QueueEntry> {
                         // Search queues from after the last active one, back around to it again
                         let queues_iter = self.queues
                             .iter()
-                            .skip(last_playing_index)
+                            .skip(last_playing_index + 1)
                             .chain(self.queues.iter().take(last_playing_index + 1));
                         find_first_user_in_channel(queues_iter, delegate, channel_id)
                     }
