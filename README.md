@@ -1,4 +1,4 @@
-# <img src="mrvn.webp" style="height: 1em" /> MRVN
+# ![MRVN smiley face](mrvn.png) MRVN
 
 MRVN is a Discord music player bot. It has a few neat features:
 
@@ -70,3 +70,5 @@ Now that MRVN is all set up, follow these steps to run it:
 
 MRVN is available under the [MIT license](https://opensource.org/licenses/MIT).
 See the LICENSE file for details.
+
+The MRVN smiley face used in this document is sourced from the [Titanfall Wiki](https://titanfall.fandom.com/wiki/Mk._III_Mobile_Robotic_Versatile_Entity_Automated_Assistant) and is copyright Respawn Entertainment 2014.
