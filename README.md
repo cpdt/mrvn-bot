@@ -1,4 +1,4 @@
-# <img src="mrvn.webp" /> MRVN
+# <img src="mrvn.webp" style="height: 1em" /> MRVN
 
 MRVN is a Discord music player bot. It has a few neat features:
 
