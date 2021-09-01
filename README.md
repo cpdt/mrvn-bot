@@ -64,7 +64,7 @@ Now that MRVN is all set up, follow these steps to run it:
     follows the format used with [env_logger](https://docs.rs/env_logger).
  2. From the `mrvn-bot/mrvn-front-discord` folder, run the command
     `cargo run ../config.json`. This will start the bot.
- 3. You can stop the bot at any time by pressing Ctrl+C in the command prompt window.
+ 3. You can stop the bot at any time by pressing Ctrl+C in the terminal window.
 
 ## License
 
