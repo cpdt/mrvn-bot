@@ -1,0 +1,16 @@
+{
+  "command_bot": {
+    "token": "Place a bot token here.",
+    "application_id": 12345
+  },
+  "voice_bots": [
+    {
+      "token": "Place a bot token here.",
+      "application_id": 1234
+    },
+    {
+      "token": "Place a bot token here.",
+      "application_id": 1234
+    }
+  ]
+}
