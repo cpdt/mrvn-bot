@@ -55,6 +55,15 @@ Follow these steps to set MRVN up for the first time:
     application ID for each Discord application. The "command bot" is the one
     that has application commands registered against it, and can be one of the
     voice bots.
+ 7. Add each bot user to your Discord guild:
+     - Visit the following URL to add the command bot, replacing
+       `APPLICATION_ID_HERE` with the bots application ID:
+       `https://discord.com/oauth2/authorize?client_id=APPLICATION_ID_HERE&scope=bot%20applications.commands&permissions=3145728`
+     - Visit the following URL to add each non-command bot, again replacing
+       `APPLICATION_ID_HERE` with the bots application ID:
+       `https://discord.com/oauth2/authorize?client_id=APPLICATION_ID_HERE&scope=bot&permissions=3145728`
+     - The different between these is because the command bot needs to request
+       extra permissions to create application commands.
 
 Now that MRVN is all set up, follow these steps to run it:
 
