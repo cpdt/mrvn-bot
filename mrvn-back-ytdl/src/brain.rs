@@ -51,7 +51,16 @@ pub struct BrainSpeakersRef<'handle> {
 }
 
 impl<'handle> BrainSpeakersRef<'handle> {
-    pub fn for_channel(&mut self, channel_id: ChannelId) -> Option<&mut GuildSpeakerRef<'handle>> {
+    pub fn find_active_in_channel(&mut self, channel_id: ChannelId) -> Option<&mut GuildSpeakerRef<'handle>> {
+        for guild_speaker in &mut self.guild_speaker_refs {
+            if guild_speaker.current_channel() == Some(channel_id) && guild_speaker.is_active() {
+                return Some(guild_speaker);
+            }
+        }
+        None
+    }
+
+    pub fn find_to_play_in_channel(&mut self, channel_id: ChannelId) -> Option<&mut GuildSpeakerRef<'handle>> {
         // Look for a speaker already in the channel
         // The weird way of doing this is a workaround for
         // https://users.rust-lang.org/t/solved-borrow-doesnt-drop-returning-this-value-requires-that/24182

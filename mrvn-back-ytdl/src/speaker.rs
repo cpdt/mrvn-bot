@@ -57,13 +57,13 @@ impl SpeakerInit for ClientBuilder<'_> {
 }
 
 struct GuildSpeaker {
-    is_active: bool,
+    current_track: Option<songbird::tracks::TrackHandle>,
 }
 
 impl GuildSpeaker {
     pub fn new() -> Self {
         GuildSpeaker {
-            is_active: false,
+            current_track: None,
         }
     }
 }
@@ -106,12 +106,10 @@ impl<'handle> GuildSpeakerRef<'handle> {
     }
 
     pub fn is_active(&self) -> bool {
-        self.guild_speaker.is_active
+        self.guild_speaker.current_track.is_some()
     }
 
     pub async fn play<Ended: EndedHandler>(&mut self, channel_id: ChannelId, song: Song, ended_handler: Ended) -> Result<(), crate::error::Error> {
-        self.guild_speaker.is_active = true;
-
         let track_handle = match &mut self.current_call {
             Some(call) if call.current_channel() == Some(channel_id.into()) => {
                 play_to_call(call.deref_mut(), song).await
@@ -122,7 +120,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
 
                 let (call_handle, join_result) = self.songbird.join(self.guild_id, channel_id).await;
                 if let Err(why) = join_result {
-                    self.guild_speaker.is_active = false;
+                    self.guild_speaker.current_track = None;
                     return Err(crate::error::Error::SongbirdJoin(why));
                 }
 
@@ -135,14 +133,30 @@ impl<'handle> GuildSpeakerRef<'handle> {
             ended_handler: Mutex::new(Some(ended_handler)),
             guild_speaker: self.guild_speaker_ref.clone(),
         }).map_err(crate::error::Error::SongbirdTrack)?;
+        self.guild_speaker.current_track = Some(track_handle);
 
         Ok(())
     }
 
-    pub async fn stop(&mut self) {
-        if let Some(call) = &mut self.current_call {
-            call.stop();
+    pub fn stop(&mut self) -> Result<(), crate::error::Error> {
+        if let Some(current_track) = &mut self.guild_speaker.current_track {
+            current_track.stop().map_err(crate::error::Error::SongbirdTrack)?;
         }
+        Ok(())
+    }
+
+    pub fn pause(&mut self) -> Result<(), crate::error::Error> {
+        if let Some(current_track) = &mut self.guild_speaker.current_track {
+            current_track.pause().map_err(crate::error::Error::SongbirdTrack)?;
+        }
+        Ok(())
+    }
+
+    pub fn unpause(&mut self) -> Result<(), crate::error::Error> {
+        if let Some(current_track) = &mut self.guild_speaker.current_track {
+            current_track.play().map_err(crate::error::Error::SongbirdTrack)?;
+        }
+        Ok(())
     }
 }
 
@@ -160,7 +174,7 @@ impl<Ended: EndedHandler> songbird::events::EventHandler for GuildSpeakerEndedEv
     async fn act(&self, _ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
         // todo: This opens up a race condition where this speaker can be stolen for another channel
         // before this channel has the chance to start a new song.
-        self.guild_speaker.lock().await.is_active = false;
+        self.guild_speaker.lock().await.current_track = None;
 
         let mut ended_fn = self.ended_handler.lock().await;
         let old_ended_handler = std::mem::replace(ended_fn.deref_mut(), None);
