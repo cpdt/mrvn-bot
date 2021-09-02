@@ -29,7 +29,7 @@ async fn main() {
     let config_file = std::fs::File::open(config_file_path).expect("Unable to open config file");
     let config: config::Config = serde_json::from_reader(config_file).expect("Unable to read config file");
 
-    let mut frontend = frontend::Frontend::new();
+    let mut frontend = frontend::Frontend::new(&config);
 
     log::info!("Starting {} voice clients", config.voice_bots.len());
     let mut voice_clients = future::try_join_all(config

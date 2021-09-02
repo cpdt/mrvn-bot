@@ -17,4 +17,5 @@ pub struct VoiceBot {
 pub struct Config {
     pub command_bot: CommandBot,
     pub voice_bots: Vec<VoiceBot>,
+    pub skip_votes_required: usize,
 }

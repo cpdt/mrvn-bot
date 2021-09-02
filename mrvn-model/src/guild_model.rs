@@ -1,11 +1,19 @@
 use serenity::model::prelude::*;
-use std::collections::{VecDeque, HashMap};
+use std::collections::{VecDeque, HashMap, HashSet};
 use crate::app_model_delegate::AppModelDelegate;
+use crate::config::AppModelConfig;
 
 fn find_first_user_in_channel<'a, Entry: 'a, Delegate: AppModelDelegate>(mut queues: impl Iterator<Item=&'a Queue<Entry>>, delegate: &Delegate, channel_id: ChannelId) -> Option<UserId> {
     queues
         .find(|queue| delegate.is_user_in_voice_channel(queue.user_id, channel_id))
         .map(|queue| queue.user_id)
+}
+
+pub enum SkipStatus {
+    OkToSkip,
+    AlreadyVoted,
+    NeedsMoreVotes(usize),
+    NothingPlaying,
 }
 
 struct Queue<Entry> {
@@ -15,22 +23,32 @@ struct Queue<Entry> {
 
 struct ChannelPlayingState {
     user_id: UserId,
+    skip_votes: HashSet<UserId>,
 }
 
 struct ChannelModel {
     playing: Option<ChannelPlayingState>,
 }
 
+pub struct StatusMessage {
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+}
+
 pub struct GuildModel<QueueEntry> {
+    config: AppModelConfig,
     message_channel: Option<ChannelId>,
+    last_status_message: Option<StatusMessage>,
     queues: Vec<Queue<QueueEntry>>,
     channels: HashMap<ChannelId, ChannelModel>,
 }
 
 impl<QueueEntry> GuildModel<QueueEntry> {
-    pub fn new() -> Self {
+    pub fn new(config: AppModelConfig) -> Self {
         GuildModel {
+            config,
             message_channel: None,
+            last_status_message: None,
             queues: Vec::new(),
             channels: HashMap::new(),
         }
@@ -40,11 +58,15 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         self.message_channel
     }
 
-    // User commands:
     pub fn set_message_channel(&mut self, message_channel: Option<ChannelId>) {
         self.message_channel = message_channel;
     }
 
+    pub fn swap_last_status_message(&mut self, last_status_message: Option<StatusMessage>) -> Option<StatusMessage> {
+        std::mem::replace(&mut self.last_status_message, last_status_message)
+    }
+
+    // User commands:
     pub fn push_entry(&mut self, user_id: UserId, entry: QueueEntry) {
         self.create_user_queue(user_id).entries.push_back(entry);
     }
@@ -88,10 +110,12 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         // Update channel state to indicate it's playing
         self.create_channel(channel_id).playing = Some(ChannelPlayingState {
             user_id: next_queue.user_id,
+            skip_votes: HashSet::new(),
         });
 
-        // Remove any empty queues
+        // Remove any empty queues and channels
         self.queues.retain(|queue| !queue.entries.is_empty());
+        self.channels.retain(|_, channel| channel.playing.is_some());
 
         Some(next_entry)
     }
@@ -103,9 +127,37 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         }
     }
 
-    pub fn cleanup(&mut self) {
-        // Remove all channels without playback
-        self.channels.retain(|_, channel| channel.playing.is_some());
+    pub fn vote_for_skip<Delegate: AppModelDelegate>(&mut self, delegate: &Delegate, channel_id: ChannelId, user_id: UserId) -> SkipStatus {
+        let skip_votes_required = self.config.skip_votes_required;
+        match self.get_channel_playing_state_mut(channel_id) {
+            Some(playing_state) => {
+                // We can skip immediately if this was the user who's currently playing.
+                if user_id == playing_state.user_id {
+                    return SkipStatus::OkToSkip;
+                }
+
+                // We can skip immediately if the user who played this entry is not in the channel
+                // anymore.
+                if !delegate.is_user_in_voice_channel(playing_state.user_id, channel_id) {
+                    return SkipStatus::OkToSkip;
+                }
+
+                // Prevent voting if this user has already skipped
+                if playing_state.skip_votes.contains(&user_id) {
+                    return SkipStatus::AlreadyVoted;
+                }
+
+                // We can skip immediately if we will have the required number of votes
+                if playing_state.skip_votes.len() + 1 >= skip_votes_required {
+                    return SkipStatus::OkToSkip;
+                }
+
+                // Add the vote and indicate more votes are needed
+                playing_state.skip_votes.insert(user_id);
+                SkipStatus::NeedsMoreVotes(skip_votes_required - playing_state.skip_votes.len())
+            },
+            None => SkipStatus::NothingPlaying,
+        }
     }
 
     fn get_user_queue_mut(&mut self, user_id: UserId) -> Option<&mut Queue<QueueEntry>> {
@@ -136,6 +188,13 @@ impl<QueueEntry> GuildModel<QueueEntry> {
     fn get_channel_playing_state(&self, channel_id: ChannelId) -> Option<&ChannelPlayingState> {
         match self.channels.get(&channel_id) {
             Some(channel) => channel.playing.as_ref(),
+            None => None,
+        }
+    }
+
+    fn get_channel_playing_state_mut(&mut self, channel_id: ChannelId) -> Option<&mut ChannelPlayingState> {
+        match self.channels.get_mut(&channel_id) {
+            Some(channel) => channel.playing.as_mut(),
             None => None,
         }
     }

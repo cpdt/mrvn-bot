@@ -5,7 +5,7 @@ use crate::brain::Brain;
 use dashmap::DashMap;
 use tokio::sync::MutexGuard;
 use crate::song::Song;
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 
 pub struct SpeakerKey;
 
@@ -134,9 +134,15 @@ impl<'handle> GuildSpeakerRef<'handle> {
         track_handle.add_event(songbird::Event::Track(songbird::TrackEvent::End), GuildSpeakerEndedEventHandler {
             ended_handler: Mutex::new(Some(ended_handler)),
             guild_speaker: self.guild_speaker_ref.clone(),
-        });
+        }).map_err(crate::error::Error::SongbirdTrack)?;
 
         Ok(())
+    }
+
+    pub async fn stop(&mut self) {
+        if let Some(call) = &mut self.current_call {
+            call.stop();
+        }
     }
 }
 
@@ -151,7 +157,7 @@ struct GuildSpeakerEndedEventHandler<Ended: EndedHandler> {
 
 #[serenity::async_trait]
 impl<Ended: EndedHandler> songbird::events::EventHandler for GuildSpeakerEndedEventHandler<Ended> {
-    async fn act(&self, ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
+    async fn act(&self, _ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
         // todo: This opens up a race condition where this speaker can be stolen for another channel
         // before this channel has the chance to start a new song.
         self.guild_speaker.lock().await.is_active = false;

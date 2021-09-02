@@ -1,4 +1,4 @@
-use serenity::{prelude::*, model::prelude::*};
+use serenity::model::prelude::*;
 use futures::prelude::*;
 
 async fn delete_all_global_application_commands(http: impl AsRef<serenity::http::Http>) -> serenity::Result<()> {
@@ -18,7 +18,7 @@ fn play_command(command: &mut serenity::builder::CreateApplicationCommand) -> &m
                 .name("term")
                 .description("A search term or song link.")
                 .kind(application_command::ApplicationCommandOptionType::String)
-                .required(true)
+                .required(false)
         })
 }
 
@@ -53,12 +53,6 @@ fn skip_command(command: &mut serenity::builder::CreateApplicationCommand) -> &m
         .description("Vote to skip the current song.")
 }
 
-fn join_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
-    command
-        .name("join")
-        .description("Summon the bot to your current voice channel.")
-}
-
 pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id: Option<GuildId>) -> serenity::Result<()> {
     let http_ref = http.as_ref();
     match guild_id {
@@ -71,7 +65,6 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
                 guild_id.create_application_command(http_ref, pause_command),
                 guild_id.create_application_command(http_ref, unpause_command),
                 guild_id.create_application_command(http_ref, skip_command),
-                guild_id.create_application_command(http_ref, join_command),
             )?;
         },
         None => {
@@ -83,7 +76,6 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
                     .create_application_command(pause_command)
                     .create_application_command(unpause_command)
                     .create_application_command(skip_command)
-                    .create_application_command(join_command)
             }).await?;
         }
     };
