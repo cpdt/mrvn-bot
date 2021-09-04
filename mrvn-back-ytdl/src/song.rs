@@ -1,11 +1,15 @@
 use crate::Error;
 use serenity::model::prelude::UserId;
 
-fn load_info_for_term(term: String) -> Result<youtube_dl::SingleVideo, Error> {
-    let res = match url::Url::parse(&term).is_ok() {
+async fn load_info_for_term(term: String) -> Result<youtube_dl::SingleVideo, Error> {
+    let query = match url::Url::parse(&term).is_ok() {
         true => youtube_dl::YoutubeDl::new(term),
         false => youtube_dl::YoutubeDl::search_for(&youtube_dl::SearchOptions::youtube(term).with_count(1)),
-    }.run().map_err(Error::YoutubeDl)?;
+    };
+    let res = tokio::task::spawn_blocking(move || query.run())
+        .await
+        .map_err(Error::Runtime)?
+        .map_err(Error::YoutubeDl)?;
 
     match res {
         youtube_dl::YoutubeDlOutput::Playlist(playlist) => {
@@ -27,7 +31,7 @@ pub struct Song {
 
 impl Song {
     pub async fn load(term: String, user_id: UserId) -> Result<Song, Error> {
-        let info = load_info_for_term(term)?;
+        let info = load_info_for_term(term).await?;
 
         let title = info.title;
         let url = info.webpage_url.ok_or(Error::NoSongsFound)?;
