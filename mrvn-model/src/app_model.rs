@@ -1,9 +1,8 @@
 use serenity::model::prelude::*;
 use dashmap::DashMap;
-use crate::guild_model::GuildModel;
+use crate::{AppModelConfig, GuildModel};
 use tokio::sync::Mutex;
 use std::sync::Arc;
-use crate::config::AppModelConfig;
 
 pub struct AppModel<QueueEntry> {
     config: AppModelConfig,

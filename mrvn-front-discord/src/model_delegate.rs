@@ -1,4 +1,4 @@
-use mrvn_model::app_model_delegate::AppModelDelegate;
+use mrvn_model::AppModelDelegate;
 use serenity::{prelude::*, model::prelude::*};
 
 pub struct ModelDelegate {

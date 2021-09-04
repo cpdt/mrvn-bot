@@ -1,4 +1,5 @@
-use crate::error::Error;
+use crate::Error;
+use serenity::model::prelude::UserId;
 
 fn load_info_for_term(term: String) -> Result<youtube_dl::SingleVideo, Error> {
     let res = match url::Url::parse(&term).is_ok() {
@@ -20,13 +21,12 @@ fn load_info_for_term(term: String) -> Result<youtube_dl::SingleVideo, Error> {
 }
 
 pub struct Song {
-    title: String,
-    url: String,
-    source: songbird::input::Input,
+    pub metadata: SongMetadata,
+    pub source: songbird::input::Input,
 }
 
 impl Song {
-    pub async fn load(term: String) -> Result<Song, Error> {
+    pub async fn load(term: String, user_id: UserId) -> Result<Song, Error> {
         let info = load_info_for_term(term)?;
 
         let title = info.title;
@@ -34,21 +34,19 @@ impl Song {
         let source = songbird::ytdl(&url).await.map_err(Error::SongbirdInput)?;
 
         Ok(Song {
-            title,
-            url,
+            metadata: SongMetadata {
+                title,
+                url,
+                user_id,
+            },
             source,
         })
     }
+}
 
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-
-    pub fn url(&self) -> &str {
-        &self.url
-    }
-
-    pub fn source(self) -> songbird::input::Input {
-        self.source
-    }
+#[derive(Clone)]
+pub struct SongMetadata {
+    pub title: String,
+    pub url: String,
+    pub user_id: UserId,
 }

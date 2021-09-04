@@ -1,7 +1,6 @@
 use serenity::model::prelude::*;
 use std::collections::{VecDeque, HashMap, HashSet};
-use crate::app_model_delegate::AppModelDelegate;
-use crate::config::AppModelConfig;
+use crate::{AppModelConfig, AppModelDelegate};
 
 fn find_first_user_in_channel<'a, Entry: 'a, Delegate: AppModelDelegate>(mut queues: impl Iterator<Item=&'a Queue<Entry>>, delegate: &Delegate, channel_id: ChannelId) -> Option<UserId> {
     queues
@@ -14,6 +13,12 @@ pub enum SkipStatus {
     AlreadyVoted,
     NeedsMoreVotes(usize),
     NothingPlaying,
+}
+
+pub enum NextEntry<QueueEntry> {
+    NoneAvailable,
+    AlreadyPlaying,
+    Entry(QueueEntry),
 }
 
 struct Queue<Entry> {
@@ -30,7 +35,8 @@ struct ChannelModel {
     playing: Option<ChannelPlayingState>,
 }
 
-pub struct StatusMessage {
+#[derive(Clone, Copy)]
+pub struct GuildActionMessage {
     pub channel_id: ChannelId,
     pub message_id: MessageId,
 }
@@ -38,7 +44,7 @@ pub struct StatusMessage {
 pub struct GuildModel<QueueEntry> {
     config: AppModelConfig,
     message_channel: Option<ChannelId>,
-    last_status_message: Option<StatusMessage>,
+    last_action_message: Option<GuildActionMessage>,
     queues: Vec<Queue<QueueEntry>>,
     channels: HashMap<ChannelId, ChannelModel>,
 }
@@ -48,7 +54,7 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         GuildModel {
             config,
             message_channel: None,
-            last_status_message: None,
+            last_action_message: None,
             queues: Vec::new(),
             channels: HashMap::new(),
         }
@@ -62,8 +68,12 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         self.message_channel = message_channel;
     }
 
-    pub fn swap_last_status_message(&mut self, last_status_message: Option<StatusMessage>) -> Option<StatusMessage> {
-        std::mem::replace(&mut self.last_status_message, last_status_message)
+    pub fn last_action_message(&self) -> Option<GuildActionMessage> {
+        self.last_action_message
+    }
+
+    pub fn set_last_action_message(&mut self, status_message: Option<GuildActionMessage>) {
+        self.last_action_message = status_message;
     }
 
     // User commands:
@@ -120,10 +130,13 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         Some(next_entry)
     }
 
-    pub fn next_channel_entry<Delegate: AppModelDelegate>(&mut self, delegate: &Delegate, channel_id: ChannelId) -> Option<QueueEntry> {
+    pub fn next_channel_entry<Delegate: AppModelDelegate>(&mut self, delegate: &Delegate, channel_id: ChannelId) -> NextEntry<QueueEntry> {
         match self.get_channel_playing_state(channel_id) {
-            Some(_) => None,
-            None => self.next_channel_entry_finished(delegate, channel_id),
+            Some(_) => NextEntry::AlreadyPlaying,
+            None => match self.next_channel_entry_finished(delegate, channel_id) {
+                Some(entry) => NextEntry::Entry(entry),
+                None => NextEntry::NoneAvailable,
+            }
         }
     }
 

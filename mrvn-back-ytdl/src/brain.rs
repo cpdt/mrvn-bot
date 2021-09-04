@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use crate::speaker::{Speaker, GuildSpeakerRef, GuildSpeakerHandle};
+use crate::{Speaker, GuildSpeakerRef, GuildSpeakerHandle, SongMetadata};
 use serenity::model::prelude::*;
 use futures::prelude::*;
 
@@ -51,10 +51,12 @@ pub struct BrainSpeakersRef<'handle> {
 }
 
 impl<'handle> BrainSpeakersRef<'handle> {
-    pub fn find_active_in_channel(&mut self, channel_id: ChannelId) -> Option<&mut GuildSpeakerRef<'handle>> {
+    pub fn find_active_in_channel(&mut self, channel_id: ChannelId) -> Option<(&mut GuildSpeakerRef<'handle>, SongMetadata)> {
         for guild_speaker in &mut self.guild_speaker_refs {
-            if guild_speaker.current_channel() == Some(channel_id) && guild_speaker.is_active() {
-                return Some(guild_speaker);
+            if let (Some(current_channel_id), Some(metadata)) = (guild_speaker.current_channel(), guild_speaker.active_metadata()) {
+                if current_channel_id == channel_id {
+                    return Some((guild_speaker, metadata));
+                }
             }
         }
         None

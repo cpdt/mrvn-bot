@@ -1,4 +1,9 @@
-pub mod brain;
-pub mod error;
-pub mod song;
-pub mod speaker;
+mod brain;
+mod error;
+mod song;
+mod speaker;
+
+pub use self::brain::*;
+pub use self::error::*;
+pub use self::song::*;
+pub use self::speaker::*;

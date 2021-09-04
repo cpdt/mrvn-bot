@@ -41,12 +41,6 @@ fn pause_command(command: &mut serenity::builder::CreateApplicationCommand) -> &
         .description("Pause the current song.")
 }
 
-fn unpause_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
-    command
-        .name("unpause")
-        .description("Unpause the current song.")
-}
-
 fn skip_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
     command
         .name("skip")
@@ -63,7 +57,6 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
                 guild_id.create_application_command(http_ref, play_command),
                 guild_id.create_application_command(http_ref, replace_command),
                 guild_id.create_application_command(http_ref, pause_command),
-                guild_id.create_application_command(http_ref, unpause_command),
                 guild_id.create_application_command(http_ref, skip_command),
             )?;
         },
@@ -74,7 +67,6 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
                     .create_application_command(play_command)
                     .create_application_command(replace_command)
                     .create_application_command(pause_command)
-                    .create_application_command(unpause_command)
                     .create_application_command(skip_command)
             }).await?;
         }

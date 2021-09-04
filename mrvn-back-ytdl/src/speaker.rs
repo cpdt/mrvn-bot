@@ -1,10 +1,9 @@
 use std::sync::Arc;
 use serenity::{prelude::*, model::prelude::*};
 use serenity::client::ClientBuilder;
-use crate::brain::Brain;
+use crate::{Brain, Song, SongMetadata};
 use dashmap::DashMap;
 use tokio::sync::MutexGuard;
-use crate::song::Song;
 use std::ops::DerefMut;
 
 pub struct SpeakerKey;
@@ -56,14 +55,20 @@ impl SpeakerInit for ClientBuilder<'_> {
     }
 }
 
+struct GuildPlayingState {
+    metadata: SongMetadata,
+    track: songbird::tracks::TrackHandle,
+    is_paused: bool,
+}
+
 struct GuildSpeaker {
-    current_track: Option<songbird::tracks::TrackHandle>,
+    playing_state: Option<GuildPlayingState>,
 }
 
 impl GuildSpeaker {
     pub fn new() -> Self {
         GuildSpeaker {
-            current_track: None,
+            playing_state: None,
         }
     }
 }
@@ -106,13 +111,26 @@ impl<'handle> GuildSpeakerRef<'handle> {
     }
 
     pub fn is_active(&self) -> bool {
-        self.guild_speaker.current_track.is_some()
+        self.guild_speaker.playing_state.is_some()
+    }
+
+    pub fn is_paused(&self) -> bool {
+        match &self.guild_speaker.playing_state {
+            Some(state) => state.is_paused,
+            None => false,
+        }
+    }
+
+    pub fn active_metadata(&self) -> Option<SongMetadata> {
+        self.guild_speaker.playing_state
+            .as_ref()
+            .map(|state| state.metadata.clone())
     }
 
     pub async fn play<Ended: EndedHandler>(&mut self, channel_id: ChannelId, song: Song, ended_handler: Ended) -> Result<(), crate::error::Error> {
         let track_handle = match &mut self.current_call {
             Some(call) if call.current_channel() == Some(channel_id.into()) => {
-                play_to_call(call.deref_mut(), song).await
+                call.play_only_source(song.source)
             },
             _ => {
                 // Ensure we don't deadlock by having a current_call lock
@@ -120,12 +138,12 @@ impl<'handle> GuildSpeakerRef<'handle> {
 
                 let (call_handle, join_result) = self.songbird.join(self.guild_id, channel_id).await;
                 if let Err(why) = join_result {
-                    self.guild_speaker.current_track = None;
+                    self.guild_speaker.playing_state = None;
                     return Err(crate::error::Error::SongbirdJoin(why));
                 }
 
                 let mut call = call_handle.lock().await;
-                play_to_call(call.deref_mut(), song).await
+                call.play_only_source(song.source)
             }
         };
 
@@ -133,35 +151,37 @@ impl<'handle> GuildSpeakerRef<'handle> {
             ended_handler: Mutex::new(Some(ended_handler)),
             guild_speaker: self.guild_speaker_ref.clone(),
         }).map_err(crate::error::Error::SongbirdTrack)?;
-        self.guild_speaker.current_track = Some(track_handle);
+        self.guild_speaker.playing_state = Some(GuildPlayingState {
+            metadata: song.metadata,
+            track: track_handle,
+            is_paused: false,
+        });
 
         Ok(())
     }
 
     pub fn stop(&mut self) -> Result<(), crate::error::Error> {
-        if let Some(current_track) = &mut self.guild_speaker.current_track {
-            current_track.stop().map_err(crate::error::Error::SongbirdTrack)?;
+        if let Some(playing_state) = &mut self.guild_speaker.playing_state {
+            playing_state.track.stop().map_err(crate::error::Error::SongbirdTrack)?;
         }
         Ok(())
     }
 
     pub fn pause(&mut self) -> Result<(), crate::error::Error> {
-        if let Some(current_track) = &mut self.guild_speaker.current_track {
-            current_track.pause().map_err(crate::error::Error::SongbirdTrack)?;
+        if let Some(playing_state) = &mut self.guild_speaker.playing_state {
+            playing_state.track.pause().map_err(crate::error::Error::SongbirdTrack)?;
+            playing_state.is_paused = true;
         }
         Ok(())
     }
 
     pub fn unpause(&mut self) -> Result<(), crate::error::Error> {
-        if let Some(current_track) = &mut self.guild_speaker.current_track {
-            current_track.play().map_err(crate::error::Error::SongbirdTrack)?;
+        if let Some(playing_state) = &mut self.guild_speaker.playing_state {
+            playing_state.track.play().map_err(crate::error::Error::SongbirdTrack)?;
+            playing_state.is_paused = false;
         }
         Ok(())
     }
-}
-
-async fn play_to_call(call: &mut songbird::Call, song: Song) -> songbird::tracks::TrackHandle {
-   call.play_only_source(song.source())
 }
 
 struct GuildSpeakerEndedEventHandler<Ended: EndedHandler> {
@@ -174,7 +194,7 @@ impl<Ended: EndedHandler> songbird::events::EventHandler for GuildSpeakerEndedEv
     async fn act(&self, _ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
         // todo: This opens up a race condition where this speaker can be stolen for another channel
         // before this channel has the chance to start a new song.
-        self.guild_speaker.lock().await.current_track = None;
+        self.guild_speaker.lock().await.playing_state = None;
 
         let mut ended_fn = self.ended_handler.lock().await;
         let old_ended_handler = std::mem::replace(ended_fn.deref_mut(), None);

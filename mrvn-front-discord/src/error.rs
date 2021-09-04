@@ -3,7 +3,7 @@ use serenity::model::prelude::*;
 #[derive(Debug)]
 pub enum Error {
     Serenity(serenity::Error),
-    Backend(mrvn_back_ytdl::error::Error),
+    Backend(mrvn_back_ytdl::Error),
 
     UnknownCommand(String),
     NoGuild,

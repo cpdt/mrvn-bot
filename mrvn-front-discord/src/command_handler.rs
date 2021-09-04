@@ -33,7 +33,7 @@ impl EventHandler for CommandHandler {
                 log::error!("Error while sending deferred message: {}", why);
             }
 
-            if let Err(why) = self.frontend.clone().handle_command(ctx.clone(), &command).await {
+            if let Err(why) = self.frontend.handle_command(&ctx, &command).await {
                 log::error!("Error while handling command: {}", why);
                 let edit_res = command.edit_original_interaction_response(&ctx.http, |response| {
                     response.create_embed(|embed| {
