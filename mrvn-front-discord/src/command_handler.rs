@@ -11,9 +11,9 @@ pub struct CommandHandler {
 }
 
 impl CommandHandler {
-    pub fn new(frontend: Frontend) -> Self {
+    pub fn new(frontend: Arc<Frontend>) -> Self {
         CommandHandler {
-            frontend: Arc::new(frontend),
+            frontend,
         }
     }
 }

@@ -3,6 +3,7 @@ use futures::prelude::*;
 use mrvn_back_ytdl::SpeakerInit;
 use std::sync::Arc;
 
+mod cleanup_loop;
 mod command_handler;
 mod commands;
 mod config;
@@ -50,10 +51,10 @@ async fn main() {
                 .register_speaker(&mut backend_brain)
         })).await.expect("Unable to create voice client");
 
-    let frontend = crate::frontend::Frontend::new(config.clone(), backend_brain, model);
+    let frontend = Arc::new(crate::frontend::Frontend::new(config.clone(), backend_brain, model));
     let mut command_client = Client::builder(&config.command_bot.token)
         .application_id(config.command_bot.application_id)
-        .event_handler(command_handler::CommandHandler::new(frontend))
+        .event_handler(command_handler::CommandHandler::new(frontend.clone()))
         .await
         .expect("Unable to create command client");
     commands::register_commands(
@@ -62,8 +63,11 @@ async fn main() {
     ).await.expect("Unable to register commands");
     log::info!("Finished registering application commands");
 
+    let cleanup_loop_future = cleanup_loop::cleanup_loop(frontend, command_client.cache_and_http.cache.clone()).map(|_| Ok(()));
+
     futures::try_join!(
         command_client.start(),
         future::try_join_all(voice_clients.iter_mut().map(|client| client.start())),
+        cleanup_loop_future,
     ).expect("Error while running client");
 }

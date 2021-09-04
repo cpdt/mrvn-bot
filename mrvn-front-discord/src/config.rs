@@ -16,9 +16,14 @@ pub struct VoiceBot {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
+    pub skip_votes_required: usize,
+
+    pub disconnect_min_inactive_secs: u64,
+    pub disconnect_check_interval_secs: u64,
+    pub only_disconnect_when_alone: bool,
+
     pub command_bot: CommandBot,
     pub voice_bots: Vec<VoiceBot>,
-    pub skip_votes_required: usize,
     pub messages: HashMap<String, String>,
 }
 

@@ -5,6 +5,7 @@ use crate::{Brain, Song, SongMetadata};
 use dashmap::DashMap;
 use tokio::sync::MutexGuard;
 use std::ops::DerefMut;
+use std::time::Instant;
 
 pub struct SpeakerKey;
 
@@ -37,6 +38,22 @@ impl Speaker {
             current_call,
         }
     }
+
+    pub fn iter(&self) -> impl Iterator<Item=GuildSpeakerHandle> + '_ {
+        self.guilds
+            .iter()
+            .map(move |guild| {
+                let guild_id = guild.key().clone();
+                let guild_speaker = guild.value().clone();
+                let current_call = self.songbird.get(guild_id);
+                GuildSpeakerHandle {
+                    guild_id,
+                    songbird: self.songbird.clone(),
+                    guild_speaker,
+                    current_call,
+                }
+            })
+    }
 }
 
 pub trait SpeakerInit {
@@ -47,7 +64,7 @@ impl SpeakerInit for ClientBuilder<'_> {
     fn register_speaker(self, brain: &mut Brain) -> Self {
         let songbird = songbird::Songbird::serenity();
         let speaker = Arc::new(Speaker::new(songbird.clone()));
-        brain.register_speaker(speaker.clone());
+        brain.speakers.push(speaker.clone());
 
         self
             .voice_manager_arc(songbird)
@@ -62,12 +79,14 @@ struct GuildPlayingState {
 }
 
 struct GuildSpeaker {
+    last_ended_time: Option<Instant>,
     playing_state: Option<GuildPlayingState>,
 }
 
 impl GuildSpeaker {
     pub fn new() -> Self {
         GuildSpeaker {
+            last_ended_time: None,
             playing_state: None,
         }
     }
@@ -104,6 +123,14 @@ pub struct GuildSpeakerRef<'handle> {
 }
 
 impl<'handle> GuildSpeakerRef<'handle> {
+    pub fn guild_id(&self) -> GuildId {
+        self.guild_id
+    }
+
+    pub fn last_ended_time(&self) -> Option<Instant> {
+        self.guild_speaker.last_ended_time
+    }
+
     pub fn current_channel(&self) -> Option<ChannelId> {
         self.current_call
             .as_ref()
@@ -182,6 +209,13 @@ impl<'handle> GuildSpeakerRef<'handle> {
         }
         Ok(())
     }
+
+    pub async fn disconnect(&mut self) -> Result<(), crate::error::Error> {
+        if let Some(call) = &mut self.current_call {
+            call.leave().await.map_err(crate::error::Error::SongbirdJoin)?;
+        }
+        Ok(())
+    }
 }
 
 struct GuildSpeakerEndedEventHandler<Ended: EndedHandler> {
@@ -194,7 +228,11 @@ impl<Ended: EndedHandler> songbird::events::EventHandler for GuildSpeakerEndedEv
     async fn act(&self, _ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
         // todo: This opens up a race condition where this speaker can be stolen for another channel
         // before this channel has the chance to start a new song.
-        self.guild_speaker.lock().await.playing_state = None;
+        {
+            let mut guild_speaker = self.guild_speaker.lock().await;
+            guild_speaker.playing_state = None;
+            guild_speaker.last_ended_time = Some(Instant::now());
+        }
 
         let mut ended_fn = self.ended_handler.lock().await;
         let old_ended_handler = std::mem::replace(ended_fn.deref_mut(), None);

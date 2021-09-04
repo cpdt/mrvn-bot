@@ -9,9 +9,9 @@ use crate::model_delegate::ModelDelegate;
 use serenity::model::id::ChannelId;
 
 pub struct Frontend {
-    config: Arc<Config>,
-    backend_brain: Brain,
-    model: AppModel<Song>,
+    pub config: Arc<Config>,
+    pub backend_brain: Brain,
+    pub model: AppModel<Song>,
 }
 
 impl Frontend {
@@ -180,11 +180,10 @@ impl Frontend {
         //    songs waiting but we weren't playing at the time. In this case we show a "queued"
         //    message and a "playing" message.
         if next_metadata.url == song_metadata.url {
-            Ok(vec![Message::Action(ActionMessage::Playing {
+            Ok(vec![Message::Action(ActionMessage::PlayingResponse {
                 song_title: song_metadata.title,
                 song_url: song_metadata.url,
                 voice_channel_id: channel_id,
-                user_id,
             })])
         } else {
             Ok(vec![

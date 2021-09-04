@@ -37,6 +37,11 @@ pub enum ActionMessage {
         voice_channel_id: ChannelId,
         user_id: UserId,
     },
+    PlayingResponse {
+        song_title: String,
+        song_url: String,
+        voice_channel_id: ChannelId,
+    },
     Finished {
         voice_channel_id: ChannelId,
     },
@@ -106,6 +111,14 @@ impl ActionMessage {
                     ("user_id", &user_id_string)
                 ])
             }
+            ActionMessage::PlayingResponse { song_title, song_url, voice_channel_id } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                config.get_message("action.playing_response", &[
+                    ("song_title", song_title),
+                    ("song_url", song_url),
+                    ("voice_channel_id", &channel_id_string),
+                ])
+            }
             ActionMessage::Finished { voice_channel_id } => {
                 let channel_id_string = voice_channel_id.0.to_string();
                 config.get_message("action.finished", &[
@@ -114,11 +127,11 @@ impl ActionMessage {
             }
             ActionMessage::NoSpeakersError { voice_channel_id } => {
                 let channel_id_string = voice_channel_id.0.to_string();
-                config.get_message("action.noSpeakersError", &[
+                config.get_message("action.no_speakers_error", &[
                     ("voice_channel_id", &channel_id_string)
                 ])
             },
-            ActionMessage::UnknownError => config.get_raw_message("action.unknownError").to_string(),
+            ActionMessage::UnknownError => config.get_raw_message("action.unknown_error").to_string(),
         }
     }
 }
@@ -133,7 +146,7 @@ impl ResponseMessage {
                 ])
             }
             ResponseMessage::QueuedNoSpeakers { song_title, song_url } => {
-                config.get_message("response.queuedNoSpeakers", &[
+                config.get_message("response.queued_no_speakers", &[
                     ("song_title", song_title),
                     ("song_url", song_url),
                 ])
@@ -161,14 +174,14 @@ impl ResponseMessage {
             ResponseMessage::SkipMoreVotesNeeded { song_title, song_url, voice_channel_id, count } => {
                 let channel_id_string = voice_channel_id.0.to_string();
                 if *count == 1 {
-                    config.get_message("response.skipMoreVotesNeeded.singular", &[
+                    config.get_message("response.skip_more_votes_needed.singular", &[
                         ("song_title", song_title),
                         ("song_url", song_url),
                         ("voice_channel_id", &channel_id_string),
                     ])
                 } else {
                     let count_string = count.to_string();
-                    config.get_message("response.skipMoreVotesNeeded.plural", &[
+                    config.get_message("response.skip_more_votes_needed.plural", &[
                         ("song_title", song_title),
                         ("song_url", song_url),
                         ("voice_channel_id", &channel_id_string),
@@ -177,14 +190,14 @@ impl ResponseMessage {
                 }
             }
             ResponseMessage::NoMatchingSongsError => {
-                config.get_raw_message("response.noMatchingSongsError").to_string()
+                config.get_raw_message("response.no_matching_songs_error").to_string()
             }
             ResponseMessage::NotInVoiceChannelError => {
-                config.get_raw_message("response.notInVoiceChannelError").to_string()
+                config.get_raw_message("response.not_in_voice_channel_error").to_string()
             }
             ResponseMessage::SkipAlreadyVotedError { song_title, song_url, voice_channel_id } => {
                 let channel_id_string = voice_channel_id.0.to_string();
-                config.get_message("response.skipAlreadyVotedError", &[
+                config.get_message("response.skip_already_voted_error", &[
                     ("song_title", song_title),
                     ("song_url", song_url),
                     ("voice_channel_id", &channel_id_string),
@@ -192,19 +205,19 @@ impl ResponseMessage {
             }
             ResponseMessage::NothingIsQueuedError { voice_channel_id } => {
                 let channel_id_string = voice_channel_id.0.to_string();
-                config.get_message("response.nothingIsQueuedError", &[
+                config.get_message("response.nothing_is_queued_error", &[
                     ("voice_channel_id", &channel_id_string),
                 ])
             }
             ResponseMessage::NothingIsPlayingError { voice_channel_id } => {
                 let channel_id_string = voice_channel_id.0.to_string();
-                config.get_message("response.nothingIsPlayingError", &[
+                config.get_message("response.nothing_is_playing_error", &[
                     ("voice_channel_id", &channel_id_string),
                 ])
             }
             ResponseMessage::AlreadyPlayingError { voice_channel_id } => {
                 let channel_id_string = voice_channel_id.0.to_string();
-                config.get_message("response.alreadyPlayingError", &[
+                config.get_message("response.already_playing_error", &[
                     ("voice_channel_id", &channel_id_string),
                 ])
             }

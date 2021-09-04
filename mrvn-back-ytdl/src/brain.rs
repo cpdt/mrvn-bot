@@ -4,7 +4,7 @@ use serenity::model::prelude::*;
 use futures::prelude::*;
 
 pub struct Brain {
-    speakers: Vec<Arc<Speaker>>,
+    pub speakers: Vec<Arc<Speaker>>,
 }
 
 impl Brain {
@@ -12,10 +12,6 @@ impl Brain {
         Brain {
             speakers: Vec::new(),
         }
-    }
-
-    pub fn register_speaker(&mut self, speaker: Arc<Speaker>) {
-        self.speakers.push(speaker);
     }
 
     pub fn guild_speakers(&self, guild_id: GuildId) -> BrainSpeakersHandle {

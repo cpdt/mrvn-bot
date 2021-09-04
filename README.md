@@ -15,12 +15,14 @@ MRVN is a Discord music player bot. It has a few neat features:
 
 MRVN is currently under development. The following features are available:
 
- - `/play` adds a song to your queue and starts playback in the channel if
-   required.
- - `/join` starts playing the channel's queue if it's not playing.
- - `/pause` and `/unpause` are not implemented yet.
- - `/replace` is not implemented yet.
- - `/skip` and `/clear` are not implemented yet.
+ - `/play [query or url]` adds a song to your queue and starts playback in the
+   channel if required.
+ - `/pause` pauses the current song playing your voice channel.
+ - `/play` unpauses the current song, or makes the bot starting if you have
+   previously queued songs.
+ - `/skip` skips the current song, or votes to skip if it you weren't the
+   original queue-er. The number of votes needed is configurable.
+ - `/replace`, `/clear` and `/queue` are not implemented yet.
 
 ## Set up
 
