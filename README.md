@@ -52,7 +52,7 @@ Follow these steps to set MRVN up for the first time:
     create a `mrvn-bot` folder.
  4. In the terminal window, enter the `mrvn-bot/mrvn-front-discord` folder:
     `cd mrvn-bot/mrvn-front-discord`.
- 5. Build the bot by running `cargo build`.
+ 5. Build the bot by running `cargo build --release`.
  6. Back in the `mrvn-bot` folder, copy the `config.example.json` file to a new
     file called `config.json`. Open the new file and add the bot token and
     application ID for each Discord application. The "command bot" is the one
@@ -75,7 +75,7 @@ Now that MRVN is all set up, follow these steps to run it:
     In a Bash shell run `export RUST_LOG=mrvn`. This environment variable
     follows the format used with [env_logger](https://docs.rs/env_logger).
  2. From the `mrvn-bot/mrvn-front-discord` folder, run the command
-    `cargo run ../config.json`. This will start the bot.
+    `cargo run --release ../config.json`. This will start the bot.
  3. You can stop the bot at any time by pressing Ctrl+C in the terminal window.
 
 ## License
