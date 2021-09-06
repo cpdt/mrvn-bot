@@ -67,7 +67,7 @@ impl Frontend {
                 match maybe_term {
                     Some(term) => {
                         log::debug!("Received play, interpreted as queue-play \"{}\"", term);
-                        self.handle_queue_play_command(ctx, user_id, guild_id, guild_model, term).await
+                        self.handle_queue_play_command(ctx, user_id, guild_id, guild_model, &term).await
                     }
                     None => {
                         log::debug!("Received play, interpreted as unpause");
@@ -82,7 +82,7 @@ impl Frontend {
                 };
 
                 log::debug!("Received replace \"{}\"", term);
-                self.handle_replace_command(ctx, user_id, guild_id, guild_model, term).await
+                self.handle_replace_command(ctx, user_id, guild_id, guild_model, &term).await
             }
             "pause" => {
                 log::debug!("Received pause");
@@ -103,7 +103,7 @@ impl Frontend {
         user_id: UserId,
         guild_id: GuildId,
         guild_model: &mut GuildModel<Song>,
-        term: String,
+        term: &str,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let delegate_future = ModelDelegate::new(ctx, guild_id);
         let song_future = async {
@@ -278,11 +278,17 @@ impl Frontend {
         user_id: UserId,
         guild_id: GuildId,
         guild_model: &mut GuildModel<Song>,
-        term: String,
+        term: &str,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        let delegate_future = ModelDelegate::new(ctx, guild_id);
+        let delegate_future = async {
+            let val = ModelDelegate::new(ctx, guild_id).await;
+            log::trace!("FINISHED LOADING DELEGATE");
+            val
+        };
         let song_future = async {
-            Song::load(term, user_id).await.map_err(crate::error::Error::Backend)
+            let val = Song::load(term, user_id).await.map_err(crate::error::Error::Backend);
+            log::trace!("FINISHED LOADING SONG");
+            val
         };
 
         let (delegate, song) = match futures::try_join!(delegate_future, song_future) {

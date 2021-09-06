@@ -9,7 +9,6 @@ edition = "2018"
 dashmap = "4.0"
 futures = "0.3"
 url = "2.2"
-youtube_dl = "0.6"
 
 [dependencies.serenity]
 version = "0.10"
