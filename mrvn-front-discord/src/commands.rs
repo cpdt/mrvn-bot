@@ -22,6 +22,12 @@ fn play_command(command: &mut serenity::builder::CreateApplicationCommand) -> &m
         })
 }
 
+//fn queue_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
+//    command
+//        .name("queue")
+//        .description("View and manage your queue.")
+//}
+
 fn replace_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
     command
         .name("replace")
@@ -47,6 +53,12 @@ fn skip_command(command: &mut serenity::builder::CreateApplicationCommand) -> &m
         .description("Vote to skip the current song.")
 }
 
+//fn stop_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
+//    command
+//        .name("stop")
+//        .description("Vote to skip the current song and stop playback.")
+//}
+
 pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id: Option<GuildId>) -> serenity::Result<()> {
     let http_ref = http.as_ref();
     match guild_id {
@@ -55,9 +67,11 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
             log::trace!("Registering guild application commands");
             futures::try_join!(
                 guild_id.create_application_command(http_ref, play_command),
+                // guild_id.create_application_command(http_ref, queue_command),
                 guild_id.create_application_command(http_ref, replace_command),
                 guild_id.create_application_command(http_ref, pause_command),
                 guild_id.create_application_command(http_ref, skip_command),
+                // guild_id.create_application_command(http_ref, stop_command),
             )?;
         },
         None => {

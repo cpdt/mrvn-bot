@@ -1,5 +1,5 @@
 use mrvn_back_ytdl::{Brain, Song, EndedHandler};
-use mrvn_model::{AppModel, GuildModel, NextEntry, SkipStatus};
+use mrvn_model::{AppModel, GuildModel, NextEntry, SkipStatus, ReplaceStatus};
 use std::sync::Arc;
 use serenity::{prelude::*, model::prelude::{UserId, GuildId, interactions, application_command}};
 use crate::config::Config;
@@ -274,14 +274,111 @@ impl Frontend {
 
     async fn handle_replace_command(
         self: &Arc<Self>,
-        _ctx: &Context,
-        _user_id: UserId,
-        _guild_id: GuildId,
-        _guild_model: &mut GuildModel<Song>,
-        _term: String,
+        ctx: &Context,
+        user_id: UserId,
+        guild_id: GuildId,
+        guild_model: &mut GuildModel<Song>,
+        term: String,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        // todo
-        Ok(vec![])
+        let delegate_future = ModelDelegate::new(ctx, guild_id);
+        let song_future = async {
+            Song::load(term, user_id).await.map_err(crate::error::Error::Backend)
+        };
+
+        let (delegate, song) = match futures::try_join!(delegate_future, song_future) {
+            Ok((delegate, song)) => (delegate, song),
+            Err(crate::error::Error::Backend(mrvn_back_ytdl::Error::NoSongsFound)) => {
+                return Ok(vec![Message::Response(ResponseMessage::NoMatchingSongsError)]);
+            },
+            Err(err) => return Err(err),
+        };
+
+        let song_metadata = song.metadata.clone();
+        log::trace!("Resolved song query as {} (\"{}\")", song_metadata.url, song_metadata.title);
+
+        let maybe_channel_id = delegate.get_user_voice_channel(user_id);
+        let channel_id = match guild_model.replace_entry(user_id, maybe_channel_id, song) {
+            // If the song was queued, no playback changes are needed so we send a status message
+            // and leave it there. But if the model indicated we're replacing the current song,
+            // we need to start playing the next song.
+            ReplaceStatus::Queued => {
+                log::trace!("No songs in queue to replace, song will be queued");
+                return Ok(vec![Message::Response(ResponseMessage::Queued {
+                    song_title: song_metadata.title,
+                    song_url: song_metadata.url,
+                })]);
+            },
+            ReplaceStatus::ReplacedInQueue(old_song) => {
+                log::trace!("Latest song in the users queue will be replaced");
+                return Ok(vec![Message::Response(ResponseMessage::Replaced {
+                    old_song_title: old_song.metadata.title,
+                    old_song_url: old_song.metadata.url,
+                    new_song_title: song_metadata.title,
+                    new_song_url: song_metadata.url,
+                })]);
+            },
+            ReplaceStatus::ReplacedCurrent(channel_id) => channel_id,
+        };
+
+        log::trace!("Only song queued by user is currently playing, it will be skipped");
+
+        // We're replacing an already-playing song, so if there's no speaker for this channel
+        // something has gone very wrong :(
+        let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
+        let mut guild_speakers_ref = guild_speakers_handle.lock().await;
+        let (guild_speaker, playing_metadata) = guild_speakers_ref
+            .find_active_in_channel(channel_id)
+            .ok_or(crate::error::Error::ModelPlayingSpeakerNotDesync)?;
+
+        // Play a song if the model indicates one isn't playing.
+        let next_song = match guild_model.next_channel_entry_finished(&delegate, channel_id) {
+            Some(song) => song,
+            None => {
+                log::trace!("New song is no longer accessible in queue, nothing will play");
+                return Ok(vec![Message::Response(ResponseMessage::NothingIsQueuedError {
+                    voice_channel_id: channel_id,
+                })])
+            }
+        };
+
+        let next_metadata = next_song.metadata.clone();
+        log::trace!("Playing \"{}\" to speaker", next_metadata.title);
+        guild_speaker.play(channel_id, next_song, EndedDelegate {
+            frontend: self.clone(),
+            ctx: ctx.clone(),
+            guild_id,
+            channel_id,
+        }).await.map_err(crate::error::Error::Backend)?;
+
+        // We could be in one of two states:
+        //  - The song that's now playing is the one we just queued, in which case we only show a
+        //    "playing" message.
+        //  - We queued a song and started a different song, which can happen if there were other
+        //    songs waiting but we weren't playing at the time. In this case we show a "queued"
+        //    message and a "playing" message.
+        if next_metadata.url == song_metadata.url {
+            Ok(vec![Message::Action(ActionMessage::PlayingResponse {
+                song_title: song_metadata.title,
+                song_url: song_metadata.url,
+                voice_channel_id: channel_id,
+            })])
+        } else {
+            Ok(vec![
+                Message::Response(ResponseMessage::ReplaceSkipped {
+                    new_song_title: song_metadata.title,
+                    new_song_url: song_metadata.url,
+                    old_song_title: playing_metadata.title,
+                    old_song_url: playing_metadata.url,
+                    voice_channel_id: channel_id,
+                }),
+                Message::Action(ActionMessage::Playing {
+                    song_title: next_metadata.title,
+                    song_url: next_metadata.url,
+                    voice_channel_id: channel_id,
+                    user_id: next_metadata.user_id,
+                })
+            ])
+        }
     }
 
     async fn handle_pause_command(
@@ -378,12 +475,7 @@ impl Frontend {
                     voice_channel_id: channel_id,
                 })])
             }
-            (_, None) => {
-                log::warn!("Out of sync: model says song is playing, but the speaker disagrees");
-                Ok(vec![Message::Response(ResponseMessage::NothingIsPlayingError {
-                    voice_channel_id: channel_id,
-                })])
-            }
+            (_, None) => Err(crate::error::Error::ModelPlayingSpeakerNotDesync)
         }
     }
 

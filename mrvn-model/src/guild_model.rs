@@ -15,6 +15,12 @@ pub enum SkipStatus {
     NothingPlaying,
 }
 
+pub enum ReplaceStatus<QueueEntry> {
+    Queued,
+    ReplacedInQueue(QueueEntry),
+    ReplacedCurrent(ChannelId),
+}
+
 pub enum NextEntry<QueueEntry> {
     NoneAvailable,
     AlreadyPlaying,
@@ -81,11 +87,25 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         self.create_user_queue(user_id).entries.push_back(entry);
     }
 
-    pub fn replace_entry(&mut self, user_id: UserId, entry: QueueEntry) -> Option<QueueEntry> {
+    pub fn replace_entry(&mut self, user_id: UserId, maybe_channel_id: Option<ChannelId>, entry: QueueEntry) -> ReplaceStatus<QueueEntry> {
         let queue = self.create_user_queue(user_id);
         let removed_entry = queue.entries.pop_back();
         queue.entries.push_back(entry);
-        removed_entry
+
+        match removed_entry {
+            Some(entry) => ReplaceStatus::ReplacedInQueue(entry),
+            None => {
+                // If the current channel is playing this user, the current song should be skipped.
+                if let Some(channel_id) = maybe_channel_id {
+                    let maybe_playing_user = self.get_channel_playing_state(channel_id).map(|playing| playing.user_id);
+                    if maybe_playing_user == Some(user_id) {
+                        return ReplaceStatus::ReplacedCurrent(channel_id);
+                    }
+                }
+
+                ReplaceStatus::Queued
+            }
+        }
     }
 
     // Events:

@@ -62,6 +62,19 @@ pub enum ResponseMessage {
         song_title: String,
         song_url: String,
     },
+    Replaced {
+        old_song_title: String,
+        old_song_url: String,
+        new_song_title: String,
+        new_song_url: String,
+    },
+    ReplaceSkipped {
+        new_song_title: String,
+        new_song_url: String,
+        old_song_title: String,
+        old_song_url: String,
+        voice_channel_id: ChannelId,
+    },
     Paused {
         song_title: String,
         song_url: String,
@@ -149,6 +162,24 @@ impl ResponseMessage {
                 config.get_message("response.queued_no_speakers", &[
                     ("song_title", song_title),
                     ("song_url", song_url),
+                ])
+            }
+            ResponseMessage::Replaced { old_song_title, old_song_url, new_song_title, new_song_url } => {
+                config.get_message("response.replaced", &[
+                    ("old_song_title", old_song_title),
+                    ("old_song_url", old_song_url),
+                    ("new_song_title", new_song_title),
+                    ("new_song_url", new_song_url)
+                ])
+            }
+            ResponseMessage::ReplaceSkipped { new_song_title, new_song_url, old_song_title, old_song_url, voice_channel_id } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                config.get_message("response.replace_skipped", &[
+                    ("new_song_title", new_song_title),
+                    ("new_song_url", new_song_url),
+                    ("old_song_title", old_song_title),
+                    ("old_song_url", old_song_url),
+                    ("voice_channel_id", &channel_id_string)
                 ])
             }
             ResponseMessage::Paused { song_title, song_url, voice_channel_id, user_id } => {
