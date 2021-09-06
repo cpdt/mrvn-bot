@@ -7,6 +7,15 @@ use std::ops::DerefMut;
 use crate::message::{send_messages, Message, ResponseMessage, ActionMessage, SendMessageDestination};
 use crate::model_delegate::ModelDelegate;
 use serenity::model::id::ChannelId;
+use std::time::Duration;
+use futures::prelude::*;
+
+const SEND_WORKING_TIMEOUT_MS: u64 = 500;
+
+enum HandleCommandError {
+    CreateError(crate::error::Error),
+    EditError(crate::error::Error),
+}
 
 pub struct Frontend {
     pub config: Arc<Config>,
@@ -31,22 +40,93 @@ impl Frontend {
         self: &Arc<Self>,
         ctx: &Context,
         command: &interactions::application_command::ApplicationCommandInteraction
-    ) -> Result<(), crate::error::Error> {
-        let guild_id = command.guild_id.ok_or(crate::error::Error::NoGuild)?;
+    ) {
+        let send_error_res = match self.handle_command_fallable(ctx, command).await {
+            Ok(_) => Ok(()),
+            Err(HandleCommandError::CreateError(why)) => {
+                log::error!("Error while handling command: {}", why);
+                command.edit_original_interaction_response(&ctx.http, |response| {
+                    response.create_embed(|embed| embed.description(self.config.get_raw_message("action.unknown_error")))
+                }).await.map(|_| ())
+            }
+            Err(HandleCommandError::EditError(why)) => {
+                log::error!("Error while handling command: {}", why);
+                command.create_interaction_response(&ctx.http, |response| {
+                    response.kind(interactions::InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|data| {
+                            data.create_embed(|embed| embed.description(self.config.get_raw_message("action.unknown_error")))
+                        })
+                }).await.map(|_| ())
+            }
+        };
+
+        if let Err(why) = send_error_res {
+            log::error!("Error while sending error response: {}", why);
+        }
+    }
+
+    async fn handle_command_fallable(
+        self: &Arc<Self>,
+        ctx: &Context,
+        command: &interactions::application_command::ApplicationCommandInteraction
+    ) -> Result<(), HandleCommandError> {
+        let guild_id = command.guild_id.ok_or(HandleCommandError::CreateError(crate::error::Error::NoGuild))?;
         let message_channel_id = command.channel_id;
 
-        // Ensure we have the guild locked for the duration of the command.
-        let guild_model_handle = self.model.get(guild_id);
-        let mut guild_model = guild_model_handle.lock().await;
-        guild_model.set_message_channel(Some(message_channel_id));
+        // This signal is used to cancel sending a "loading..." message when we finish executing
+        // the command.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let send_deferred_message_future = async {
+            let show_deferred_message = futures::select!(
+                _ = rx.fuse() => false,
+                _ = tokio::time::sleep(Duration::from_millis(SEND_WORKING_TIMEOUT_MS)).fuse() => true,
+            );
+            if show_deferred_message {
+                if let Err(why) = command.create_interaction_response(&ctx.http, |response| {
+                    response.kind(interactions::InteractionResponseType::DeferredChannelMessageWithSource)
+                }).await {
+                    log::error!("Error while sending deferred message: {}", why);
+                }
+            }
+        };
 
-        // Execute the command
-        let messages = self.handle_guild_command(ctx, command, guild_id, guild_model.deref_mut()).await?;
+        let send_future = async {
+            // Ensure we have the guild locked for the duration of the command.
+            let guild_model_handle = self.model.get(guild_id);
+            let mut guild_model = guild_model_handle.lock().await;
+            guild_model.set_message_channel(Some(message_channel_id));
 
-        // Send all messages
-        send_messages(&self.config, ctx, SendMessageDestination::Interaction(command), guild_model.deref_mut(), messages).await?;
+            // Execute the command
+            let messages_res = self
+                .handle_guild_command(ctx, command, guild_id, guild_model.deref_mut())
+                .await;
 
-        Ok(())
+            // If the timeout has finished, rx will be closed so this send call will return an
+            // error. We can use this to know that a response has been created, and we need to edit
+            // it from now on.
+            let has_sent_deferred = tx.send(()).is_err();
+            let messages = messages_res
+                .map_err(if has_sent_deferred { HandleCommandError::EditError } else { HandleCommandError::CreateError })?;
+
+            let send_res = send_messages(
+                &self.config,
+                ctx,
+                SendMessageDestination::Interaction {
+                    interaction: command,
+                    is_edit: has_sent_deferred,
+                },
+                guild_model.deref_mut(),
+                messages,
+            ).await;
+            if let Err(why) = send_res {
+                log::error!("Error while sending response: {}", why);
+            }
+
+            Ok(())
+        };
+
+        let (send_res, _) = futures::join!(send_future, send_deferred_message_future);
+        send_res
     }
 
     async fn handle_guild_command(

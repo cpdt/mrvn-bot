@@ -2,10 +2,6 @@ use serenity::{prelude::*, model::prelude::*};
 use std::sync::Arc;
 use crate::frontend::Frontend;
 
-fn unknown_error_message() -> &'static str {
-    ":robot: :weary: An error occurred."
-}
-
 pub struct CommandHandler {
     frontend: Arc<Frontend>,
 }
@@ -26,24 +22,7 @@ impl EventHandler for CommandHandler {
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::ApplicationCommand(command) = interaction {
-            if let Err(why) = command.create_interaction_response(&ctx.http, |response| {
-                response
-                    .kind(InteractionResponseType::DeferredChannelMessageWithSource)
-            }).await {
-                log::error!("Error while sending deferred message: {}", why);
-            }
-
-            if let Err(why) = self.frontend.handle_command(&ctx, &command).await {
-                log::error!("Error while handling command: {}", why);
-                let edit_res = command.edit_original_interaction_response(&ctx.http, |response| {
-                    response.create_embed(|embed| {
-                        embed.description(unknown_error_message())
-                    })
-                }).await;
-                if let Err(why) = edit_res {
-                    log::error!("Error while sending error response: {}", why);
-                }
-            }
+            self.frontend.handle_command(&ctx, &command).await;
         }
     }
 }

@@ -1,6 +1,6 @@
 use serenity::{
     client::Context,
-    model::interactions::application_command::ApplicationCommandInteraction
+    model::interactions::{application_command::ApplicationCommandInteraction, InteractionResponseType}
 };
 use mrvn_model::{GuildModel, GuildActionMessage};
 use mrvn_back_ytdl::Song;
@@ -12,7 +12,10 @@ use serenity::model::prelude::ChannelId;
 #[derive(Clone, Copy)]
 pub enum SendMessageDestination<'interaction> {
     Channel(ChannelId),
-    Interaction(&'interaction ApplicationCommandInteraction),
+    Interaction {
+        interaction: &'interaction ApplicationCommandInteraction,
+        is_edit: bool,
+    }
 }
 
 pub async fn send_messages(
@@ -24,7 +27,7 @@ pub async fn send_messages(
 ) -> Result<(), crate::error::Error> {
     let message_channel_id = match destination {
         SendMessageDestination::Channel(channel) => channel,
-        SendMessageDestination::Interaction(interaction) => interaction.channel_id,
+        SendMessageDestination::Interaction { interaction, .. } => interaction.channel_id,
     };
 
     // Action messages are special: we only keep the latest one around. This also means out of
@@ -44,15 +47,25 @@ pub async fn send_messages(
     // Send the first message as an interaction response, if our destination is an interaction.
     let maybe_first_message = match destination {
         SendMessageDestination::Channel(_) => None,
-        SendMessageDestination::Interaction(_) => messages_iter.next(),
+        SendMessageDestination::Interaction { .. } => messages_iter.next(),
     };
     let first_message_future = async {
-        if let (SendMessageDestination::Interaction(interaction), Some(first_message)) = (destination, maybe_first_message) {
-            interaction.edit_original_interaction_response(&ctx.http, |response| {
-                response.create_embed(|embed| {
-                    embed.description(first_message.to_string(config))
-                })
-            }).await.map_err(crate::error::Error::Serenity)?;
+        if let (SendMessageDestination::Interaction { interaction, is_edit }, Some(first_message)) = (destination, maybe_first_message) {
+            if is_edit {
+                interaction.edit_original_interaction_response(&ctx.http, |response| {
+                    response.create_embed(|embed| {
+                        embed.description(first_message.to_string(config))
+                    })
+                }).await.map_err(crate::error::Error::Serenity)?;
+            } else {
+                interaction.create_interaction_response(&ctx.http, |response| {
+                    response
+                        .kind(InteractionResponseType::ChannelMessageWithSource)
+                        .interaction_response_data(|data| {
+                            data.create_embed(|embed| embed.description(first_message.to_string(config)))
+                        })
+                }).await.map_err(crate::error::Error::Serenity)?;
+            }
         }
         Ok(())
     };
