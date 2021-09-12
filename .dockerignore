@@ -3,3 +3,4 @@ _old/
 media/
 target/
 Dockerfile
+config.json

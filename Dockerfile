@@ -9,6 +9,5 @@ RUN apt-get update && apt-get install -y ca-certificates ffmpeg python && rm -rf
 RUN update-ca-certificates
 COPY --from=builder /usr/local/bin/youtube-dl /usr/local/bin/youtube-dl
 COPY --from=builder /usr/local/cargo/bin/mrvn-front-discord /usr/local/bin/mrvn-front-discord
-COPY config.json config.json
 ENV RUST_LOG=mrvn
 CMD ["mrvn-front-discord", "config.json"]
