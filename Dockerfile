@@ -11,3 +11,4 @@ COPY --from=builder /usr/local/bin/youtube-dl /usr/local/bin/youtube-dl
 COPY --from=builder /usr/local/cargo/bin/mrvn-front-discord /usr/local/bin/mrvn-front-discord
 ENV RUST_LOG=mrvn
 CMD ["mrvn-front-discord", "config.json"]
+LABEL org.opencontainers.image.source="https://github.com/cpdt/mrvn-bot"

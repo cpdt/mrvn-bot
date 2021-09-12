@@ -1,0 +1,24 @@
+on:
+  push:
+    branches:
+      - 'master'
+
+name: Build image
+
+jobs:
+  build-container:
+    name: Build image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Log in to registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Build image
+        run: docker build . --tag ghcr.io/cpdt/mrvn-bot:latest
+
+      - name: Push image
+        run: docker push ghcr.io/cpdt/mrvn-bot:latest
