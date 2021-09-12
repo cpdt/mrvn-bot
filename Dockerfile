@@ -5,7 +5,8 @@ COPY . .
 RUN cargo install --path ./mrvn-front-discord
 
 FROM debian:buster-slim
-RUN apt-get update && apt-get install -y ffmpeg python && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates ffmpeg python && rm -rf /var/lib/apt/lists/*
+RUN update-ca-certificates
 COPY --from=builder /usr/local/bin/youtube-dl /usr/local/bin/youtube-dl
 COPY --from=builder /usr/local/cargo/bin/mrvn-front-discord /usr/local/bin/mrvn-front-discord
 COPY config.json config.json
