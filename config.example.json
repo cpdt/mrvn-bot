@@ -1,4 +1,5 @@
 {
+  "embed_color": "FFFFA9",
   "skip_votes_required": 2,
   "disconnect_min_inactive_secs": 600,
   "disconnect_check_interval_secs": 600,

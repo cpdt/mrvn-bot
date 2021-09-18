@@ -54,7 +54,9 @@ pub async fn send_messages(
             if is_edit {
                 interaction.edit_original_interaction_response(&ctx.http, |response| {
                     response.create_embed(|embed| {
-                        embed.description(first_message.to_string(config))
+                        embed
+                            .description(first_message.to_string(config))
+                            .color(config.embed_color)
                     })
                 }).await.map_err(crate::error::Error::Serenity)?;
             } else {
@@ -62,7 +64,11 @@ pub async fn send_messages(
                     response
                         .kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|data| {
-                            data.create_embed(|embed| embed.description(first_message.to_string(config)))
+                            data.create_embed(|embed| {
+                                embed
+                                    .description(first_message.to_string(config))
+                                    .color(config.embed_color)
+                            })
                         })
                 }).await.map_err(crate::error::Error::Serenity)?;
             }
@@ -75,7 +81,9 @@ pub async fn send_messages(
     let remaining_messages_future = future::try_join_all(messages_iter.map(|message| async move {
         let channel_message = message_channel_id.send_message(&ctx.http, |create_message| {
             create_message.embed(|embed| {
-                embed.description(message.to_string(config))
+                embed
+                    .description(message.to_string(config))
+                    .color(config.embed_color)
             })
         }).await.map_err(crate::error::Error::Serenity)?;
 

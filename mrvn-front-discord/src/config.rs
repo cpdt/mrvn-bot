@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
+use serde::de::Error;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandBot {
@@ -16,6 +17,8 @@ pub struct VoiceBot {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
+    #[serde(deserialize_with = "from_hex")]
+    pub embed_color: u32,
     pub skip_votes_required: usize,
 
     pub disconnect_min_inactive_secs: u64,
@@ -54,4 +57,9 @@ impl Config {
                 .unwrap_or("")
         }).into_owned()
     }
+}
+
+fn from_hex<'de, D>(deserializer: D) -> Result<u32, D::Error> where D: serde::Deserializer<'de> {
+    let s: String = Deserialize::deserialize(deserializer)?;
+    u32::from_str_radix(&s, 16).map_err(D::Error::custom)
 }
