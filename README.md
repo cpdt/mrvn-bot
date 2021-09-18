@@ -61,28 +61,42 @@ must set up the Discord application first:
 
 ### Run the Docker image (recommended)
 
- 1. Follow the steps to [install the Docker Engine](https://docs.docker.com/engine/install/).
- 2. Once installed, run the following from a command prompt, replacing 
-    `path/to/config.json` with the path to your configuration saved in the
-    previous section: `docker run --name mrvn-bot --rm --mount type=bind,source=path/to/config.json,target=/config.json ghcr.io/cpdt/mrvn-bot:latest`
- 3. You can stop MRVN by running `docker stop mrvn-bot`
+Before running, ensure you have [the Docker Engine installed](https://docs.docker.com/engine/install/).
+
+Once that's done, you can run the following command any time you want to start MRVN. Make sure to replace `/path/to/config.json` with the path to your configuration file saved previously.
+
+```
+docker run --name mrvn-bot --rm --mount type=bind,source=/path/to/config.json,target=/config.json ghcr.io/cpdt/mrvn-bot:latest
+```
+
+You can stop MRVN by running `docker stop mrvn-bot`.
 
 ### Build and run locally
 
 This is an alternative to running the Docker image as described above. I would
 recommend you follow those instructions as they involve less setting up, but
-you're welcome to build and run MRVN yourself:
+you're welcome to build and run MRVN yourself.
 
- 1. First install some dependencies:
+First off you need to setup your environment:
+
+ 1. Ensure you have the required dependencies installed:
     - [Git](https://git-scm.com/)
     - [Rustup](https://rustup.rs/)
     - [youtube-dl](https://youtube-dl.org/)
     - [FFmpeg](https://www.ffmpeg.org)
  2. Clone the repository by running `git clone https://github.com/cpdt/mrvn-bot`
- 3. Inside the repository, run the following from a command prompt, replacing
-    `path/to/config.json` with the path to your configuration saved in the
-    previous section: `cargo run --release path/to/config.json`
- 4. You can stop MRVN by pressing Ctrl+C in the terminal window.
+
+Once that's done, you can run the following command from inside the repository any time you want to start MRVN. Make sure to replace `/path/to/config.json` with the path to your configuration file saved previously.
+
+```
+cargo run --release /path/to/config.json
+```
+
+The first time this runs it will build MRVN, which can take a while. After it's been built once it should start immediately.
+
+If you want to see logging output, set the `RUST_LOG` environment variable to `mrvn` before running the above command. This uses [the syntax from the env-logger library](https://docs.rs/env_logger/0.9.0/env_logger/index.html#enabling-logging).
+
+You can stop MRVN by pressing Ctrl+C in the terminal window.
 
 ## Why?
 
