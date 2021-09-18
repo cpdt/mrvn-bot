@@ -29,54 +29,60 @@ MRVN is currently under development. The following features are available:
 
 MRVN is self-hosted. This means you must register your own Discord applications
 and run the bot on your own system. It's written in
-[Rust](https://www.rust-lang.org/) and runs on Windows, Linux and macOS.
+[Rust](https://www.rust-lang.org/) and runs on Windows, Linux and macOS. You
+can build MRVN yourself or use our prebuilt Docker images, but either way you
+must set up the Discord application first:
 
-First some things you'll need to install:
+### Creating the Discord Applications
 
- - [Git](https://git-scm.com/)
- - [Rustup](https://rustup.rs/)
- - [youtube-dl](https://youtube-dl.org/)
- - [FFmpeg](https://www.ffmpeg.org)
+1. Open the [Discord Developer Portal](https://discord.com/developers) and
+   create an application for each channel you want to be able to play
+   simultaneously. E.g. if your guild has three voice channels, you might want
+   three applications to be able to listen to music in all channels at the same
+   time.
+2. Ensure you create a Bot user for each application. You can do this from the
+   "Bot" panel in the application settings.
+3. Download a copy of the [config.example.json](https://github.com/cpdt/mrvn-bot/blob/master/config.example.json)
+   file and save it somewhere, maybe as config.json. This file contains your 
+   configuration for the bot, including Discord application tokens.
+4. Open the new config.json file and add the bot token and application ID for
+   each Discord application. The "command bot" is the one that has application
+   commands registered against it. It can be one of the voice bots, but you must
+   also include it in the voice bot list.
+5. Add each bot user to your Discord guild:
+    - Visit the following URL to add the command bot, replacing
+      `APPLICATION_ID_HERE` with the bots application ID:
+      `https://discord.com/oauth2/authorize?client_id=APPLICATION_ID_HERE&scope=bot%20applications.commands&permissions=3145728`
+    - Visit the following URL to add each non-command bot, again replacing
+      `APPLICATION_ID_HERE` with the bots application ID:
+      `https://discord.com/oauth2/authorize?client_id=APPLICATION_ID_HERE&scope=bot&permissions=3145728`
+    - The different between these is because the command bot needs to request
+      extra permissions to create application commands.
 
-Follow these steps to set MRVN up for the first time:
+### Run the Docker image (recommended)
 
- 1. Open the [Discord Developer Portal](https://discord.com/developers) and
-    create an application for each channel you want to be able to play
-    simultaneously. E.g. if your guild has three voice channels, you might want
-    three applications to be able to listen to music in all channels at the same
-    time.
- 2. Ensure you create a Bot user for each application. You can do this from the
-    "Bot" panel in the application settings.
- 3. Clone this repository to your computer. In a terminal window enter
-    `git clone https://github.com/cpdt/mrvn-bot`, which after running will
-    create a `mrvn-bot` folder.
- 4. In the terminal window, enter the `mrvn-bot/mrvn-front-discord` folder:
-    `cd mrvn-bot/mrvn-front-discord`.
- 5. Build the bot by running `cargo build --release`.
- 6. Back in the `mrvn-bot` folder, copy the `config.example.json` file to a new
-    file called `config.json`. Open the new file and add the bot token and
-    application ID for each Discord application. The "command bot" is the one
-    that has application commands registered against it, and can be one of the
-    voice bots.
- 7. Add each bot user to your Discord guild:
-     - Visit the following URL to add the command bot, replacing
-       `APPLICATION_ID_HERE` with the bots application ID:
-       `https://discord.com/oauth2/authorize?client_id=APPLICATION_ID_HERE&scope=bot%20applications.commands&permissions=3145728`
-     - Visit the following URL to add each non-command bot, again replacing
-       `APPLICATION_ID_HERE` with the bots application ID:
-       `https://discord.com/oauth2/authorize?client_id=APPLICATION_ID_HERE&scope=bot&permissions=3145728`
-     - The different between these is because the command bot needs to request
-       extra permissions to create application commands.
+ 1. Follow the steps to [install the Docker Engine](https://docs.docker.com/engine/install/).
+ 2. Once installed, run the following from a command prompt, replacing 
+    `path/to/config.json` with the path to your configuration saved in the
+    previous section: `docker run --name mrvn-bot --rm --mount type=bind,source=path/to/config.json,target=/config.json ghcr.io/cpdt/mrvn-bot:latest`
+ 3. You can stop MRVN by running `docker stop mrvn-bot`
 
-Now that MRVN is all set up, follow these steps to run it:
+### Build and run locally
 
- 1. Set the `RUST_LOG` environment variable to `mrvn` to see logs in the
-    terminal window. In the windows command prompt, run `SET RUST_LOG=mrvn`.
-    In a Bash shell run `export RUST_LOG=mrvn`. This environment variable
-    follows the format used with [env_logger](https://docs.rs/env_logger).
- 2. From the `mrvn-bot/mrvn-front-discord` folder, run the command
-    `cargo run --release ../config.json`. This will start the bot.
- 3. You can stop the bot at any time by pressing Ctrl+C in the terminal window.
+This is an alternative to running the Docker image as described above. I would
+recommend you follow those instructions as they involve less setting up, but
+you're welcome to build and run MRVN yourself:
+
+ 1. First install some dependencies:
+    - [Git](https://git-scm.com/)
+    - [Rustup](https://rustup.rs/)
+    - [youtube-dl](https://youtube-dl.org/)
+    - [FFmpeg](https://www.ffmpeg.org)
+ 2. Clone the repository by running `git clone https://github.com/cpdt/mrvn-bot`
+ 3. Inside the repository, run the following from a command prompt, replacing
+    `path/to/config.json` with the path to your configuration saved in the
+    previous section: `cargo run --release path/to/config.json`
+ 4. You can stop MRVN by pressing Ctrl+C in the terminal window.
 
 ## License
 
