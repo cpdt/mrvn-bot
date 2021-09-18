@@ -26,7 +26,7 @@
     "response.queued": ":robot: :see_no_evil: Queued [{song_title}](<{song_url}>)",
     "response.no_matching_songs_error": ":robot: :flushed: No matching songs were found",
     "response.not_in_voice_channel_error": ":robot: :weary: You're not in a voice channel",
-    "response.queued_no_speakers": ":robot: :see_no_evil: Queued [{song_title}](<{song_url}>). No bots are available right now, join a different channel or use `/join` when one is to start playing here.",
+    "response.queued_no_speakers": ":robot: :see_no_evil: Queued [{song_title}](<{song_url}>). No bots are available right now, join a different channel or use `/play` when one is to start playing here.",
     "response.replaced": ":robot: :cowboy: Replaced [{old_song_title}](<{old_song_url}>) with [{new_song_title}](<{new_song_url}>)",
     "response.replace_skipped": ":robot: :cowboy: Queued [{new_song_title}](<{new_song_url}>) and skipped [{old_song_title}](<{old_song_url}>) in <#{voice_channel_id}>",
     "response.paused": ":robot: :nerd: Paused [{song_title}](<{song_url}>) in <#{voice_channel_id}> (added by <@{user_id}>)",
