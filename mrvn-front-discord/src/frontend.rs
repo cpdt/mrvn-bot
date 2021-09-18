@@ -1,5 +1,5 @@
 use mrvn_back_ytdl::{Brain, Song, EndedHandler, GuildSpeakerEndedHandle};
-use mrvn_model::{AppModel, GuildModel, NextEntry, SkipStatus, ReplaceStatus};
+use mrvn_model::{AppModel, GuildModel, NextEntry, VoteStatus, ReplaceStatus, VoteType};
 use std::sync::Arc;
 use serenity::{prelude::*, model::prelude::{UserId, GuildId, interactions, application_command}};
 use crate::config::Config;
@@ -180,10 +180,13 @@ impl Frontend {
                 log::debug!("Received skip");
                 self.handle_skip_command(ctx, user_id, guild_id, guild_model).await
             }
+            "stop" => {
+                log::debug!("Received stop");
+                self.handle_stop_command(ctx, user_id, guild_id, guild_model).await
+            }
             command_name => Err(crate::error::Error::UnknownCommand(command_name.to_string())),
         }
     }
-
 
     async fn handle_queue_play_command(
         self: &Arc<Self>,
@@ -523,14 +526,14 @@ impl Frontend {
             None => return Ok(vec![Message::Response(ResponseMessage::NotInVoiceChannelError)])
         };
 
-        let skip_status = guild_model.vote_for_skip(&delegate, channel_id, user_id);
+        let skip_status = guild_model.vote_for_skip(&delegate, VoteType::Skip, channel_id, user_id);
 
         let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
         let mut guild_speakers_ref = guild_speakers_handle.lock().await;
         let maybe_guild_speaker = guild_speakers_ref.find_active_in_channel(channel_id);
 
         match (skip_status, maybe_guild_speaker) {
-            (SkipStatus::OkToSkip, Some((guild_speaker, active_metadata))) => {
+            (VoteStatus::Success, Some((guild_speaker, active_metadata))) => {
                 log::trace!("Skip command passed preconditions, stopping current playback");
                 guild_speaker.stop().map_err(crate::error::Error::Backend)?;
                 Ok(vec![Message::Response(ResponseMessage::Skipped {
@@ -540,7 +543,7 @@ impl Frontend {
                     user_id: active_metadata.user_id,
                 })])
             }
-            (SkipStatus::AlreadyVoted, Some((_, active_metadata))) => {
+            (VoteStatus::AlreadyVoted, Some((_, active_metadata))) => {
                 log::trace!("User attempting to skip has already voted, not stopping playback");
                 Ok(vec![Message::Response(ResponseMessage::SkipAlreadyVotedError {
                     song_title: active_metadata.title.clone(),
@@ -548,7 +551,7 @@ impl Frontend {
                     voice_channel_id: channel_id,
                 })])
             }
-            (SkipStatus::NeedsMoreVotes(count), Some((_, active_metadata))) => {
+            (VoteStatus::NeedsMoreVotes(count), Some((_, active_metadata))) => {
                 log::trace!("Skip vote has been counted but more are needed, not stopping playback");
                 Ok(vec![Message::Response(ResponseMessage::SkipMoreVotesNeeded {
                     song_title: active_metadata.title.clone(),
@@ -557,13 +560,68 @@ impl Frontend {
                     count,
                 })])
             }
-            (SkipStatus::NothingPlaying, _) => {
+            (VoteStatus::NothingPlaying, _) => {
                 log::trace!("Nothing is playing in the user's voice channel, not stopping playback");
                 Ok(vec![Message::Response(ResponseMessage::NothingIsPlayingError {
                     voice_channel_id: channel_id,
                 })])
             }
             (_, None) => Err(crate::error::Error::ModelPlayingSpeakerNotDesync)
+        }
+    }
+
+    async fn handle_stop_command(
+        self: &Arc<Self>,
+        ctx: &Context,
+        user_id: UserId,
+        guild_id: GuildId,
+        guild_model: &mut GuildModel<Song>,
+    ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
+        let delegate = ModelDelegate::new(&ctx, guild_id).await?;
+        let channel_id = match delegate.get_user_voice_channel(user_id) {
+            Some(channel) => channel,
+            None => return Ok(vec![Message::Response(ResponseMessage::NotInVoiceChannelError)])
+        };
+
+        match guild_model.vote_for_skip(&delegate, VoteType::Stop, channel_id, user_id) {
+            VoteStatus::Success => {
+                let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
+                let mut guild_speakers_ref = guild_speakers_handle.lock().await;
+                let maybe_guild_speaker = guild_speakers_ref.find_active_in_channel(channel_id);
+                match maybe_guild_speaker {
+                    Some((guild_speaker, active_metadata)) => {
+                        log::trace!("Stop command passed preconditions, stopping playback");
+                        guild_model.set_channel_stopped(channel_id);
+                        guild_speaker.stop().map_err(crate::error::Error::Backend)?;
+                        Ok(vec![Message::Response(ResponseMessage::Stopped {
+                            song_title: active_metadata.title.clone(),
+                            song_url: active_metadata.url.clone(),
+                            voice_channel_id: channel_id,
+                            user_id: active_metadata.user_id,
+                        })])
+                    }
+                    None => Err(crate::error::Error::ModelPlayingSpeakerNotDesync)
+                }
+            }
+            VoteStatus::AlreadyVoted => {
+                log::trace!("User attempting to stop has already voted, not stopping playback");
+                Ok(vec![Message::Response(ResponseMessage::StopAlreadyVotedError {
+                    voice_channel_id: channel_id,
+                })])
+            }
+            VoteStatus::NeedsMoreVotes(count) => {
+                log::trace!("Stop vote has been counted but more are needed, not stopping playback");
+                Ok(vec![Message::Response(ResponseMessage::StopMoreVotesNeeded {
+                    voice_channel_id: channel_id,
+                    count,
+                })])
+            }
+            VoteStatus::NothingPlaying => {
+                log::trace!("Nothing is playing in the user's voice channel, not stopping playback");
+                Ok(vec![Message::Response(ResponseMessage::NothingIsPlayingError {
+                    voice_channel_id: channel_id,
+                })])
+            }
         }
     }
 
@@ -602,6 +660,12 @@ impl Frontend {
         channel_id: ChannelId,
         ended_handle: GuildSpeakerEndedHandle,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
+        if guild_model.is_channel_stopped(channel_id) {
+            log::trace!("Channel has been stopped, not playing any more songs.");
+            ended_handle.stop().await;
+            return Ok(Vec::new());
+        }
+
         let delegate = ModelDelegate::new(&ctx, guild_id).await?;
         match guild_model.next_channel_entry_finished(&delegate, channel_id) {
             Some(song) => {

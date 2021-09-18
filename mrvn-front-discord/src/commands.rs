@@ -53,11 +53,11 @@ fn skip_command(command: &mut serenity::builder::CreateApplicationCommand) -> &m
         .description("Vote to skip the current song.")
 }
 
-//fn stop_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
-//    command
-//        .name("stop")
-//        .description("Vote to skip the current song and stop playback.")
-//}
+fn stop_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
+    command
+        .name("stop")
+        .description("Vote to skip the current song and stop playback.")
+}
 
 pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id: Option<GuildId>) -> serenity::Result<()> {
     let http_ref = http.as_ref();
@@ -71,7 +71,7 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
                 guild_id.create_application_command(http_ref, replace_command),
                 guild_id.create_application_command(http_ref, pause_command),
                 guild_id.create_application_command(http_ref, skip_command),
-                // guild_id.create_application_command(http_ref, stop_command),
+                guild_id.create_application_command(http_ref, stop_command),
             )?;
         },
         None => {
@@ -82,6 +82,7 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
                     .create_application_command(replace_command)
                     .create_application_command(pause_command)
                     .create_application_command(skip_command)
+                    .create_application_command(stop_command)
             }).await?;
         }
     };

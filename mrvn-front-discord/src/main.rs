@@ -35,6 +35,7 @@ async fn main() {
     let mut backend_brain = mrvn_back_ytdl::Brain::new();
     let model = mrvn_model::AppModel::new(mrvn_model::AppModelConfig {
         skip_votes_required: config.skip_votes_required,
+        stop_votes_required: config.stop_votes_required,
     });
 
     log::info!("Starting {} voice clients", config.voice_bots.len());

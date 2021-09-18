@@ -22,8 +22,10 @@ MRVN is currently under development. The following features are available:
    previously queued songs.
  - `/skip` skips the current song, or votes to skip if it you weren't the
    original queue-er. The number of votes needed is configurable.
+ - `/stop` skips the current song and doesn't play any more queued songs. Use
+   `/play` to continue playback.
  - `/replace` replaces your most recently queued song.
- - `/queue` and `/stop` are not implemented yet.
+ - Queue management is not implemented yet.
 
 ## Set up
 

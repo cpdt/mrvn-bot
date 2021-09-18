@@ -8,8 +8,13 @@ fn find_first_user_in_channel<'a, Entry: 'a, Delegate: AppModelDelegate>(mut que
         .map(|queue| queue.user_id)
 }
 
-pub enum SkipStatus {
-    OkToSkip,
+pub enum VoteType {
+    Skip,
+    Stop,
+}
+
+pub enum VoteStatus {
+    Success,
     AlreadyVoted,
     NeedsMoreVotes(usize),
     NothingPlaying,
@@ -32,13 +37,27 @@ struct Queue<Entry> {
     entries: VecDeque<Entry>,
 }
 
-struct ChannelPlayingState {
-    user_id: UserId,
-    skip_votes: HashSet<UserId>,
+enum ChannelPlayingState {
+    NotPlaying,
+    Stopped,
+    Playing {
+        playing_user_id: UserId,
+        skip_votes: HashSet<UserId>,
+        stop_votes: HashSet<UserId>,
+    }
+}
+
+impl ChannelPlayingState {
+    fn is_playing(&self) -> bool {
+        match self {
+            ChannelPlayingState::Playing { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 struct ChannelModel {
-    playing: Option<ChannelPlayingState>,
+    playing: ChannelPlayingState,
 }
 
 #[derive(Clone, Copy)]
@@ -82,6 +101,17 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         self.last_action_message = status_message;
     }
 
+    pub fn is_channel_stopped(&self, channel_id: ChannelId) -> bool {
+        match self.get_channel_playing_state(channel_id) {
+            Some(ChannelPlayingState::Stopped) => true,
+            _ => false,
+        }
+    }
+
+    pub fn set_channel_stopped(&mut self, channel_id: ChannelId) {
+        self.create_channel(channel_id).playing = ChannelPlayingState::Stopped;
+    }
+
     // User commands:
     pub fn push_entry(&mut self, user_id: UserId, entry: QueueEntry) {
         self.create_user_queue(user_id).entries.push_back(entry);
@@ -97,7 +127,7 @@ impl<QueueEntry> GuildModel<QueueEntry> {
             None => {
                 // If the current channel is playing this user, the current song should be skipped.
                 if let Some(channel_id) = maybe_channel_id {
-                    let maybe_playing_user = self.get_channel_playing_state(channel_id).map(|playing| playing.user_id);
+                    let maybe_playing_user = self.get_channel_playing_user(channel_id);
                     if maybe_playing_user == Some(user_id) {
                         return ReplaceStatus::ReplacedCurrent(channel_id);
                     }
@@ -110,15 +140,15 @@ impl<QueueEntry> GuildModel<QueueEntry> {
 
     // Events:
     pub fn next_channel_entry_finished<Delegate: AppModelDelegate>(&mut self, delegate: &Delegate, channel_id: ChannelId) -> Option<QueueEntry> {
-        let old_playing_state = std::mem::replace(&mut self.create_channel(channel_id).playing, None);
+        let old_playing_state = std::mem::replace(&mut self.create_channel(channel_id).playing, ChannelPlayingState::NotPlaying);
 
         // Round-robin to the next user
         let next_user_id = match old_playing_state {
-            Some(state) => {
+            ChannelPlayingState::Playing { playing_user_id: user_id, .. } => {
                 let last_playing_queue_index = self
                     .queues
                     .iter_mut()
-                    .position(|queue| queue.user_id == state.user_id);
+                    .position(|queue| queue.user_id == user_id);
                 match last_playing_queue_index {
                     Some(last_playing_index) => {
                         // Search queues from after the last active one, back around to it again
@@ -131,65 +161,74 @@ impl<QueueEntry> GuildModel<QueueEntry> {
                     None => find_first_user_in_channel(self.queues.iter(), delegate, channel_id),
                 }
             }
-            None => find_first_user_in_channel(self.queues.iter(), delegate, channel_id),
+            _ => find_first_user_in_channel(self.queues.iter(), delegate, channel_id),
         }?;
 
         let next_queue = self.get_user_queue_mut(next_user_id)?;
         let next_entry = next_queue.entries.pop_front()?;
 
         // Update channel state to indicate it's playing
-        self.create_channel(channel_id).playing = Some(ChannelPlayingState {
-            user_id: next_queue.user_id,
+        self.create_channel(channel_id).playing = ChannelPlayingState::Playing {
+            playing_user_id: next_queue.user_id,
             skip_votes: HashSet::new(),
-        });
+            stop_votes: HashSet::new(),
+        };
 
         // Remove any empty queues and channels
         self.queues.retain(|queue| !queue.entries.is_empty());
-        self.channels.retain(|_, channel| channel.playing.is_some());
+        self.channels.retain(|_, channel| channel.playing.is_playing());
 
         Some(next_entry)
     }
 
     pub fn next_channel_entry<Delegate: AppModelDelegate>(&mut self, delegate: &Delegate, channel_id: ChannelId) -> NextEntry<QueueEntry> {
         match self.get_channel_playing_state(channel_id) {
-            Some(_) => NextEntry::AlreadyPlaying,
-            None => match self.next_channel_entry_finished(delegate, channel_id) {
+            Some(ChannelPlayingState::Playing { .. }) => NextEntry::AlreadyPlaying,
+            _ => match self.next_channel_entry_finished(delegate, channel_id) {
                 Some(entry) => NextEntry::Entry(entry),
                 None => NextEntry::NoneAvailable,
             }
         }
     }
 
-    pub fn vote_for_skip<Delegate: AppModelDelegate>(&mut self, delegate: &Delegate, channel_id: ChannelId, user_id: UserId) -> SkipStatus {
-        let skip_votes_required = self.config.skip_votes_required;
+    pub fn vote_for_skip<Delegate: AppModelDelegate>(&mut self, delegate: &Delegate, vote_type: VoteType, channel_id: ChannelId, user_id: UserId) -> VoteStatus {
+        let votes_required = match vote_type {
+            VoteType::Skip => self.config.skip_votes_required,
+            VoteType::Stop => self.config.stop_votes_required,
+        };
         match self.get_channel_playing_state_mut(channel_id) {
-            Some(playing_state) => {
-                // We can skip immediately if this was the user who's currently playing.
-                if user_id == playing_state.user_id {
-                    return SkipStatus::OkToSkip;
+            Some(ChannelPlayingState::Playing { playing_user_id, skip_votes, stop_votes, .. }) => {
+                let votes = match vote_type {
+                    VoteType::Skip => skip_votes,
+                    VoteType::Stop => stop_votes
+                };
+
+                // We can skip immediately if this was the user who's currently playing
+                if user_id == *playing_user_id {
+                    return VoteStatus::Success;
                 }
 
                 // We can skip immediately if the user who played this entry is not in the channel
                 // anymore.
-                if !delegate.is_user_in_voice_channel(playing_state.user_id, channel_id) {
-                    return SkipStatus::OkToSkip;
+                if !delegate.is_user_in_voice_channel(*playing_user_id, channel_id) {
+                    return VoteStatus::Success;
                 }
 
-                // Prevent voting if this user has already skipped
-                if playing_state.skip_votes.contains(&user_id) {
-                    return SkipStatus::AlreadyVoted;
+                // Prevent voting if this user has already voted
+                if votes.contains(&user_id) {
+                    return VoteStatus::AlreadyVoted;
                 }
 
-                // We can skip immediately if we will have the required number of votes
-                if playing_state.skip_votes.len() + 1 >= skip_votes_required {
-                    return SkipStatus::OkToSkip;
+                // We can succeed immediately if we will have the required number of votes
+                if votes.len() + 1 >= votes_required {
+                    return VoteStatus::Success;
                 }
 
                 // Add the vote and indicate more votes are needed
-                playing_state.skip_votes.insert(user_id);
-                SkipStatus::NeedsMoreVotes(skip_votes_required - playing_state.skip_votes.len())
-            },
-            None => SkipStatus::NothingPlaying,
+                votes.insert(user_id);
+                VoteStatus::NeedsMoreVotes(votes_required - votes.len())
+            }
+            _ => VoteStatus::NothingPlaying,
         }
     }
 
@@ -214,21 +253,22 @@ impl<QueueEntry> GuildModel<QueueEntry> {
     fn create_channel(&mut self, channel_id: ChannelId) -> &mut ChannelModel {
         self.channels.entry(channel_id)
             .or_insert(ChannelModel {
-                playing: None
+                playing: ChannelPlayingState::NotPlaying
             })
     }
 
     fn get_channel_playing_state(&self, channel_id: ChannelId) -> Option<&ChannelPlayingState> {
-        match self.channels.get(&channel_id) {
-            Some(channel) => channel.playing.as_ref(),
-            None => None,
-        }
+        self.channels.get(&channel_id).map(|channel| &channel.playing)
     }
 
     fn get_channel_playing_state_mut(&mut self, channel_id: ChannelId) -> Option<&mut ChannelPlayingState> {
-        match self.channels.get_mut(&channel_id) {
-            Some(channel) => channel.playing.as_mut(),
-            None => None,
+        self.channels.get_mut(&channel_id).map(|channel| &mut channel.playing)
+    }
+
+    fn get_channel_playing_user(&self, channel_id: ChannelId) -> Option<UserId> {
+        match self.get_channel_playing_state(channel_id) {
+            Some(ChannelPlayingState::Playing { playing_user_id: user_id, .. }) => Some(*user_id),
+            _ => None,
         }
     }
 }

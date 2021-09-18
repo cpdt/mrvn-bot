@@ -93,11 +93,24 @@ pub enum ResponseMessage {
         voice_channel_id: ChannelId,
         count: usize,
     },
+    Stopped {
+        song_title: String,
+        song_url: String,
+        voice_channel_id: ChannelId,
+        user_id: UserId,
+    },
+    StopMoreVotesNeeded {
+        voice_channel_id: ChannelId,
+        count: usize,
+    },
     NoMatchingSongsError,
     NotInVoiceChannelError,
     SkipAlreadyVotedError {
         song_title: String,
         song_url: String,
+        voice_channel_id: ChannelId,
+    },
+    StopAlreadyVotedError {
         voice_channel_id: ChannelId,
     },
     NothingIsQueuedError {
@@ -220,6 +233,30 @@ impl ResponseMessage {
                     ])
                 }
             }
+            ResponseMessage::Stopped { song_title, song_url, voice_channel_id, user_id } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                let user_id_string = user_id.0.to_string();
+                config.get_message("response.stopped", &[
+                    ("song_title", song_title),
+                    ("song_url", song_url),
+                    ("voice_channel_id", &channel_id_string),
+                    ("user_id", &user_id_string),
+                ])
+            }
+            ResponseMessage::StopMoreVotesNeeded { voice_channel_id, count } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                if *count == 1 {
+                    config.get_message("response.stop_more_votes_needed.singular", &[
+                        ("voice_channel_id", &channel_id_string)
+                    ])
+                } else {
+                    let count_string = count.to_string();
+                    config.get_message("response.stop_more_votes_needed.plural", &[
+                        ("voice_channel_id", &channel_id_string),
+                        ("count", &count_string)
+                    ])
+                }
+            }
             ResponseMessage::NoMatchingSongsError => {
                 config.get_raw_message("response.no_matching_songs_error").to_string()
             }
@@ -231,6 +268,12 @@ impl ResponseMessage {
                 config.get_message("response.skip_already_voted_error", &[
                     ("song_title", song_title),
                     ("song_url", song_url),
+                    ("voice_channel_id", &channel_id_string),
+                ])
+            }
+            ResponseMessage::StopAlreadyVotedError { voice_channel_id } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                config.get_message("response.stop_already_voted_error", &[
                     ("voice_channel_id", &channel_id_string),
                 ])
             }

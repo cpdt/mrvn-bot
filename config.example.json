@@ -1,6 +1,7 @@
 {
   "embed_color": "FFFFA9",
   "skip_votes_required": 2,
+  "stop_votes_required": 2,
   "disconnect_min_inactive_secs": 600,
   "disconnect_check_interval_secs": 600,
   "only_disconnect_when_alone": true,
@@ -35,6 +36,10 @@
     "response.skip_more_votes_needed.singular": ":robot: :fast_forward: 1 more `/skip` vote is needed to skip [{song_title}](<{song_url}>) in <#{voice_channel_id}>",
     "response.skip_more_votes_needed.plural": ":robot: :fast_forward: {count} more `/skip` votes are needed to skip [{song_title}](<{song_url}>) in <#{voice_channel_id}>",
     "response.skip_already_voted_error": ":robot: :triumph: You've already voted to skip this song [{song_title}](<{song_url}>) in <#{voice_channel_id}>",
+    "response.stopped": ":robot: :relieved: Skipped [{song_title}](<{song_url}>) and stopped playing in <#{voice_channel_id}> (added by <@{user_id}>)",
+    "response.stop_more_votes_needed.singular": ":robot: :stop_button: 1 more `/stop` vote is needed to stop playing in <#{voice_channel_id}>",
+    "response.stop_more_votes_needed.plural": ":robot: :stop_button: {count} more `/stop` votes are needed to stop playing in <#{voice_channel_id}>",
+    "response.stop_already_voted_error": ":robot: :triumph: You've already voted to stop playing in <#{voice_channel_id}>",
     "response.nothing_is_queued_error": ":robot: :weary: Nothing is queued to play in <#{voice_channel_id}>",
     "response.nothing_is_playing_error": ":robot: :weary: Nothing is playing in <#{voice_channel_id}>",
     "response.already_playing_error": ":robot: :weary: A song is already playing in <#{voice_channel_id}>"

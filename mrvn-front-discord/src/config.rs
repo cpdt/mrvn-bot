@@ -20,6 +20,7 @@ pub struct Config {
     #[serde(deserialize_with = "from_hex")]
     pub embed_color: u32,
     pub skip_votes_required: usize,
+    pub stop_votes_required: usize,
 
     pub disconnect_min_inactive_secs: u64,
     pub disconnect_check_interval_secs: u64,
