@@ -45,17 +45,17 @@ impl Frontend {
             Ok(_) => Ok(()),
             Err(HandleCommandError::CreateError(why)) => {
                 log::error!("Error while handling command: {}", why);
-                command.edit_original_interaction_response(&ctx.http, |response| {
-                    response.create_embed(|embed| embed.description(self.config.get_raw_message("action.unknown_error")))
-                }).await.map(|_| ())
-            }
-            Err(HandleCommandError::EditError(why)) => {
-                log::error!("Error while handling command: {}", why);
                 command.create_interaction_response(&ctx.http, |response| {
                     response.kind(interactions::InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|data| {
                             data.create_embed(|embed| embed.description(self.config.get_raw_message("action.unknown_error")))
                         })
+                }).await.map(|_| ())
+            }
+            Err(HandleCommandError::EditError(why)) => {
+                log::error!("Error while handling command: {}", why);
+                command.edit_original_interaction_response(&ctx.http, |response| {
+                    response.create_embed(|embed| embed.description(self.config.get_raw_message("action.unknown_error")))
                 }).await.map(|_| ())
             }
         };
