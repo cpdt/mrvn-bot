@@ -86,6 +86,16 @@ you're welcome to build and run MRVN yourself:
     previous section: `cargo run --release path/to/config.json`
  4. You can stop MRVN by pressing Ctrl+C in the terminal window.
 
+## Why?
+
+In mid-2021 [Groovy](https://groovy.bot) and [Rythm](https://rythm.fm), Discord’s two largest music bots, were taken offline by YouTube. In the wake of this, I created MRVN mainly to serve a couple of servers I’m in, but also as an open tool for anyone looking for a new music bot.
+
+Unlike Groovy, Rythm and many like them, MRVN was designed from the ground up to be easy to self-host, making it impossible to be taken down. As open source software MRVN also does not charge its users, following the most notable clause in YouTube’s terms of service that commercial music bots break.
+
+Finally, as a personal project MRVN has been an opportunity for me to re-think how my friends and I use music bots. This has led to what I consider improvements over the old formula: playing songs in a round-robin pattern so everybody gets a go, handling servers with multiple voice channels with a breeze, and codifying the unspoken “you shall not skip a song that is not yours” rule.
+
+Finally, please let me know if you’re using MRVN on your server! I would love to hear what works and what doesn’t, and see how it’s being used “in the wild”.
+
 ## License
 
 MRVN is available under the [MIT license](https://opensource.org/licenses/MIT).
