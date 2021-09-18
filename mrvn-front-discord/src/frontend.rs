@@ -1,4 +1,4 @@
-use mrvn_back_ytdl::{Brain, Song, EndedHandler};
+use mrvn_back_ytdl::{Brain, Song, EndedHandler, GuildSpeakerEndedHandle};
 use mrvn_model::{AppModel, GuildModel, NextEntry, SkipStatus, ReplaceStatus};
 use std::sync::Arc;
 use serenity::{prelude::*, model::prelude::{UserId, GuildId, interactions, application_command}};
@@ -559,14 +559,14 @@ impl Frontend {
         }
     }
 
-    async fn handle_playback_ended(self: Arc<Self>, ctx: Context, guild_id: GuildId, channel_id: ChannelId) {
+    async fn handle_playback_ended(self: Arc<Self>, ctx: Context, guild_id: GuildId, channel_id: ChannelId, ended_handle: GuildSpeakerEndedHandle) {
         log::trace!("Playback has ended, preparing to play the next available song");
 
         let guild_model_handle = self.model.get(guild_id);
         let mut guild_model = guild_model_handle.lock().await;
 
         let maybe_message_channel = guild_model.message_channel();
-        let messages = self.continue_channel_playback(&ctx, guild_id, guild_model.deref_mut(), channel_id).await;
+        let messages = self.continue_channel_playback(&ctx, guild_id, guild_model.deref_mut(), channel_id, ended_handle).await;
         let send_result = match (messages, maybe_message_channel) {
             (Ok(messages), Some(message_channel)) => {
                 send_messages(&self.config, &ctx, SendMessageDestination::Channel(message_channel), guild_model.deref_mut(), messages).await
@@ -591,47 +591,37 @@ impl Frontend {
         ctx: &Context,
         guild_id: GuildId,
         guild_model: &mut GuildModel<Song>,
-        channel_id: ChannelId
+        channel_id: ChannelId,
+        ended_handle: GuildSpeakerEndedHandle,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let delegate = ModelDelegate::new(&ctx, guild_id).await?;
+        match guild_model.next_channel_entry_finished(&delegate, channel_id) {
+            Some(song) => {
+                let next_metadata = song.metadata.clone();
+                log::trace!("Playing \"{}\" to speaker", next_metadata.title);
+                ended_handle.play(channel_id, song, EndedDelegate {
+                    frontend: self.clone(),
+                    ctx: ctx.clone(),
+                    guild_id,
+                    channel_id,
+                }).await.map_err(crate::error::Error::Backend)?;
 
-        let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
-        let mut guild_speakers_ref = guild_speakers_handle.lock().await;
-        let guild_speaker = match guild_speakers_ref.find_to_play_in_channel(channel_id) {
-            Some(speaker) => speaker,
-            None => {
-                log::trace!("No speakers are available to handle playback, nothing will be played");
-                return Ok(vec![Message::Action(ActionMessage::NoSpeakersError {
+                Ok(vec![Message::Action(ActionMessage::Playing {
+                    song_title: next_metadata.title,
+                    song_url: next_metadata.url,
                     voice_channel_id: channel_id,
+                    user_id: next_metadata.user_id,
                 })])
             }
-        };
-
-        let next_song = match guild_model.next_channel_entry_finished(&delegate, channel_id) {
-            Some(song) => song,
             None => {
                 log::trace!("No songs are available to play in the channel, nothing will be played");
+
+                ended_handle.stop().await;
                 return Ok(vec![Message::Action(ActionMessage::Finished {
                     voice_channel_id: channel_id,
                 })])
             }
-        };
-
-        let next_metadata = next_song.metadata.clone();
-        log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-        guild_speaker.play(channel_id, next_song, EndedDelegate {
-            frontend: self.clone(),
-            ctx: ctx.clone(),
-            guild_id,
-            channel_id,
-        }).await.map_err(crate::error::Error::Backend)?;
-
-        Ok(vec![Message::Action(ActionMessage::Playing {
-            song_title: next_metadata.title,
-            song_url: next_metadata.url,
-            voice_channel_id: channel_id,
-            user_id: next_metadata.user_id,
-        })])
+        }
     }
 }
 
@@ -643,7 +633,7 @@ struct EndedDelegate {
 }
 
 impl EndedHandler for EndedDelegate {
-    fn on_ended(self) {
-        tokio::task::spawn(self.frontend.handle_playback_ended(self.ctx, self.guild_id, self.channel_id));
+    fn on_ended(self, ended_handle: GuildSpeakerEndedHandle) {
+        tokio::task::spawn(self.frontend.handle_playback_ended(self.ctx, self.guild_id, self.channel_id, ended_handle));
     }
 }

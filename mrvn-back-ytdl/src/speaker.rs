@@ -103,7 +103,7 @@ impl GuildSpeakerHandle {
     pub async fn lock(&self) -> GuildSpeakerRef<'_> {
         GuildSpeakerRef {
             guild_id: self.guild_id,
-            songbird: &self.songbird,
+            songbird: self.songbird.clone(),
             guild_speaker_ref: self.guild_speaker.clone(),
             guild_speaker: self.guild_speaker.lock().await,
             current_call: match &self.current_call {
@@ -116,7 +116,7 @@ impl GuildSpeakerHandle {
 
 pub struct GuildSpeakerRef<'handle> {
     guild_id: GuildId,
-    songbird: &'handle songbird::Songbird,
+    songbird: Arc<songbird::Songbird>,
     guild_speaker_ref: Arc<Mutex<GuildSpeaker>>,
     guild_speaker: MutexGuard<'handle, GuildSpeaker>,
     current_call: Option<MutexGuard<'handle, songbird::Call>>,
@@ -175,8 +175,11 @@ impl<'handle> GuildSpeakerRef<'handle> {
         };
 
         track_handle.add_event(songbird::Event::Track(songbird::TrackEvent::End), GuildSpeakerEndedEventHandler {
-            ended_handler: Mutex::new(Some(ended_handler)),
-            guild_speaker: self.guild_speaker_ref.clone(),
+            data: Mutex::new(Some((ended_handler, GuildSpeakerEndedHandle {
+                guild_id: self.guild_id,
+                songbird: self.songbird.clone(),
+                guild_speaker: self.guild_speaker_ref.clone(),
+            }))),
         }).map_err(crate::error::Error::SongbirdTrack)?;
         self.guild_speaker.playing_state = Some(GuildPlayingState {
             metadata: song.metadata,
@@ -185,6 +188,11 @@ impl<'handle> GuildSpeakerRef<'handle> {
         });
 
         Ok(())
+    }
+
+    pub fn unlock(&mut self) {
+        self.guild_speaker.playing_state = None;
+        self.guild_speaker.last_ended_time = Some(Instant::now());
     }
 
     pub fn stop(&mut self) -> Result<(), crate::error::Error> {
@@ -219,25 +227,16 @@ impl<'handle> GuildSpeakerRef<'handle> {
 }
 
 struct GuildSpeakerEndedEventHandler<Ended: EndedHandler> {
-    ended_handler: Mutex<Option<Ended>>,
-    guild_speaker: Arc<Mutex<GuildSpeaker>>,
+    data: Mutex<Option<(Ended, GuildSpeakerEndedHandle)>>,
 }
 
 #[serenity::async_trait]
 impl<Ended: EndedHandler> songbird::events::EventHandler for GuildSpeakerEndedEventHandler<Ended> {
     async fn act(&self, _ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
-        // todo: This opens up a race condition where this speaker can be stolen for another channel
-        // before this channel has the chance to start a new song.
-        {
-            let mut guild_speaker = self.guild_speaker.lock().await;
-            guild_speaker.playing_state = None;
-            guild_speaker.last_ended_time = Some(Instant::now());
-        }
-
-        let mut ended_fn = self.ended_handler.lock().await;
-        let old_ended_handler = std::mem::replace(ended_fn.deref_mut(), None);
-        if let Some(old_ended_handler) = old_ended_handler {
-            old_ended_handler.on_ended();
+        let mut data_ref = self.data.lock().await;
+        let data = std::mem::replace(data_ref.deref_mut(), None);
+        if let Some((ended_handler, handle)) = data {
+            ended_handler.on_ended(handle);
         }
 
         None
@@ -245,5 +244,35 @@ impl<Ended: EndedHandler> songbird::events::EventHandler for GuildSpeakerEndedEv
 }
 
 pub trait EndedHandler: Send + 'static {
-    fn on_ended(self);
+    fn on_ended(self, ended_handle: GuildSpeakerEndedHandle);
+}
+
+pub struct GuildSpeakerEndedHandle {
+    guild_id: GuildId,
+    songbird: Arc<songbird::Songbird>,
+    guild_speaker: Arc<Mutex<GuildSpeaker>>,
+}
+
+impl GuildSpeakerEndedHandle {
+    fn get_handle(&self) -> GuildSpeakerHandle {
+        GuildSpeakerHandle {
+            guild_id: self.guild_id,
+            songbird: self.songbird.clone(),
+            guild_speaker: self.guild_speaker.clone(),
+            current_call: self.songbird.get(self.guild_id),
+        }
+    }
+
+    pub async fn play<Ended: EndedHandler>(self, channel_id: ChannelId, song: Song, ended_handler: Ended) -> Result<(), crate::error::Error> {
+        let handle = self.get_handle();
+        let mut guild_speaker_ref = handle.lock().await;
+        guild_speaker_ref.play(channel_id, song, ended_handler).await
+    }
+
+    pub async fn stop(self) {
+        let handle = self.get_handle();
+        let mut guild_speaker_ref = handle.lock().await;
+        guild_speaker_ref.guild_speaker.playing_state = None;
+        guild_speaker_ref.guild_speaker.last_ended_time = Some(Instant::now());
+    }
 }
