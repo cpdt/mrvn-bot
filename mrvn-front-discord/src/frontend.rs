@@ -10,7 +10,7 @@ use serenity::model::id::ChannelId;
 use std::time::Duration;
 use futures::prelude::*;
 
-const SEND_WORKING_TIMEOUT_MS: u64 = 500;
+const SEND_WORKING_TIMEOUT_MS: u64 = 50;
 
 enum HandleCommandError {
     CreateError(crate::error::Error),
@@ -360,15 +360,9 @@ impl Frontend {
         guild_model: &mut GuildModel<Song>,
         term: &str,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        let delegate_future = async {
-            let val = ModelDelegate::new(ctx, guild_id).await;
-            log::trace!("FINISHED LOADING DELEGATE");
-            val
-        };
+        let delegate_future = ModelDelegate::new(ctx, guild_id);
         let song_future = async {
-            let val = Song::load(term, user_id).await.map_err(crate::error::Error::Backend);
-            log::trace!("FINISHED LOADING SONG");
-            val
+            Song::load(term, user_id).await.map_err(crate::error::Error::Backend)
         };
 
         let (delegate, song) = match futures::try_join!(delegate_future, song_future) {
