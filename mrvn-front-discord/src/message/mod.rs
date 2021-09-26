@@ -58,9 +58,15 @@ pub enum ResponseMessage {
         song_title: String,
         song_url: String,
     },
+    QueuedMultiple {
+        count: usize,
+    },
     QueuedNoSpeakers {
         song_title: String,
         song_url: String,
+    },
+    QueuedMultipleNoSpeakers {
+        count: usize,
     },
     Replaced {
         old_song_title: String,
@@ -105,6 +111,7 @@ pub enum ResponseMessage {
     },
     NoMatchingSongsError,
     NotInVoiceChannelError,
+    UnsupportedSiteError,
     SkipAlreadyVotedError {
         song_title: String,
         song_url: String,
@@ -171,10 +178,22 @@ impl ResponseMessage {
                     ("song_url", song_url),
                 ])
             }
+            ResponseMessage::QueuedMultiple { count } => {
+                let count_string = count.to_string();
+                config.get_message("response.queued_multiple", &[
+                    ("count", &count_string)
+                ])
+            }
             ResponseMessage::QueuedNoSpeakers { song_title, song_url } => {
                 config.get_message("response.queued_no_speakers", &[
                     ("song_title", song_title),
                     ("song_url", song_url),
+                ])
+            }
+            ResponseMessage::QueuedMultipleNoSpeakers { count } => {
+                let count_string = count.to_string();
+                config.get_message("response.queued_multiple_no_speakers", &[
+                    ("count", &count_string)
                 ])
             }
             ResponseMessage::Replaced { old_song_title, old_song_url, new_song_title, new_song_url } => {
@@ -262,6 +281,9 @@ impl ResponseMessage {
             }
             ResponseMessage::NotInVoiceChannelError => {
                 config.get_raw_message("response.not_in_voice_channel_error").to_string()
+            }
+            ResponseMessage::UnsupportedSiteError => {
+                config.get_raw_message("response.unsupported_site_error").to_string()
             }
             ResponseMessage::SkipAlreadyVotedError { song_title, song_url, voice_channel_id } => {
                 let channel_id_string = voice_channel_id.0.to_string();

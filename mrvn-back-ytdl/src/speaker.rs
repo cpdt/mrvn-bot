@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use serenity::{prelude::*, model::prelude::*};
 use serenity::client::ClientBuilder;
-use crate::{Brain, Song, SongMetadata};
+use crate::{Brain, Song, SongMetadata, PlayConfig};
 use dashmap::DashMap;
 use tokio::sync::MutexGuard;
 use std::ops::DerefMut;
@@ -154,10 +154,12 @@ impl<'handle> GuildSpeakerRef<'handle> {
             .map(|state| state.metadata.clone())
     }
 
-    pub async fn play<Ended: EndedHandler>(&mut self, channel_id: ChannelId, song: Song, ended_handler: Ended) -> Result<(), crate::error::Error> {
+    pub async fn play<Ended: EndedHandler>(&mut self, channel_id: ChannelId, song: Song, config: &PlayConfig<'_>, ended_handler: Ended) -> Result<(), crate::error::Error> {
+        let input = song.get_input(config).await?;
+
         let track_handle = match &mut self.current_call {
             Some(call) if call.current_channel() == Some(channel_id.into()) => {
-                call.play_only_source(song.source)
+                call.play_only_source(input)
             },
             _ => {
                 // Ensure we don't deadlock by having a current_call lock
@@ -170,7 +172,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
                 }
 
                 let mut call = call_handle.lock().await;
-                call.play_only_source(song.source)
+                call.play_only_source(input)
             }
         };
 
@@ -263,10 +265,10 @@ impl GuildSpeakerEndedHandle {
         }
     }
 
-    pub async fn play<Ended: EndedHandler>(self, channel_id: ChannelId, song: Song, ended_handler: Ended) -> Result<(), crate::error::Error> {
+    pub async fn play<Ended: EndedHandler>(self, channel_id: ChannelId, song: Song, config: &PlayConfig<'_>, ended_handler: Ended) -> Result<(), crate::error::Error> {
         let handle = self.get_handle();
         let mut guild_speaker_ref = handle.lock().await;
-        guild_speaker_ref.play(channel_id, song, ended_handler).await
+        guild_speaker_ref.play(channel_id, song, config, ended_handler).await
     }
 
     pub async fn stop(self) {

@@ -1,10 +1,20 @@
 {
-  "embed_color": "FFFFA9",
+  "embed_color": "F7E38D",
   "skip_votes_required": 2,
   "stop_votes_required": 2,
   "disconnect_min_inactive_secs": 600,
   "disconnect_check_interval_secs": 600,
   "only_disconnect_when_alone": true,
+  "search_prefix": "ytsearch1",
+  "host_blocklist": [],
+  "ytdl": {
+    "name": "youtube-dl",
+    "args": ["-f", "webm[abr>0]/bestaudio/best", "-R", "infinite"]
+  },
+  "ffmpeg": {
+    "name": "ffmpeg",
+    "args": []
+  },
   "command_bot": {
     "token": "Place a bot token here.",
     "application_id": 12345
@@ -26,9 +36,12 @@
     "action.unknown_error": ":robot: :weary: An error occurred",
     "action.no_speakers_error": ":robot: :weary: No bots are available to play in <#{voice_channel_id}>, try again when one is",
     "response.queued": ":robot: :see_no_evil: Queued [{song_title}](<{song_url}>)",
+    "response.queued_multiple": ":robot: :see_no_evil: Queued {count} songs",
     "response.no_matching_songs_error": ":robot: :flushed: No matching songs were found",
     "response.not_in_voice_channel_error": ":robot: :weary: You're not in a voice channel",
+    "response.unsupported_site_error": ":robot: :weary: That website is not supported",
     "response.queued_no_speakers": ":robot: :see_no_evil: Queued [{song_title}](<{song_url}>). No bots are available right now, join a different channel or use `/play` when one is to start playing here.",
+    "response.queued_multiple_no_speakers": ":robot: :see_no_evil: Queued {count} songs. No bots are available right now, join a different channel or use `/play` when one is to start playing here.",
     "response.replaced": ":robot: :cowboy: Replaced [{old_song_title}](<{old_song_url}>) with [{new_song_title}](<{new_song_url}>)",
     "response.replace_skipped": ":robot: :cowboy: Queued [{new_song_title}](<{new_song_url}>) and skipped [{old_song_title}](<{old_song_url}>) in <#{voice_channel_id}>",
     "response.paused": ":robot: :nerd: Paused [{song_title}](<{song_url}>) in <#{voice_channel_id}> (added by <@{user_id}>)",

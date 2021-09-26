@@ -113,8 +113,11 @@ impl<QueueEntry> GuildModel<QueueEntry> {
     }
 
     // User commands:
-    pub fn push_entry(&mut self, user_id: UserId, entry: QueueEntry) {
-        self.create_user_queue(user_id).entries.push_back(entry);
+    pub fn push_entries(&mut self, user_id: UserId, entries: impl IntoIterator<Item=QueueEntry>) {
+        let queue = self.create_user_queue(user_id);
+        for entry in entries {
+            queue.entries.push_back(entry);
+        }
     }
 
     pub fn replace_entry(&mut self, user_id: UserId, maybe_channel_id: Option<ChannelId>, entry: QueueEntry) -> ReplaceStatus<QueueEntry> {

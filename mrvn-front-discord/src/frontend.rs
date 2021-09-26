@@ -17,6 +17,11 @@ enum HandleCommandError {
     EditError(crate::error::Error),
 }
 
+enum QueuedSongsMetadata {
+    Single(mrvn_back_ytdl::SongMetadata),
+    Multiple(usize),
+}
+
 pub struct Frontend {
     pub config: Arc<Config>,
     pub backend_brain: Brain,
@@ -196,34 +201,46 @@ impl Frontend {
         guild_model: &mut GuildModel<Song>,
         term: &str,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
+        let play_config = self.config.get_play_config();
+
         let delegate_future = ModelDelegate::new(ctx, guild_id);
-        let song_future = async {
-            Song::load(term, user_id).await.map_err(crate::error::Error::Backend)
+        let song_future = Song::load(term, user_id, &play_config).map_err(crate::error::Error::Backend);
+
+        let (delegate, songs) = match futures::try_join!(delegate_future, song_future) {
+            Ok(data) => data,
+            Err(crate::error::Error::Backend(mrvn_back_ytdl::Error::UnsupportedUrl)) => {
+                return Ok(vec![Message::Response(ResponseMessage::UnsupportedSiteError)]);
+            }
+            Err(why) => return Err(why),
+        };
+        if songs.is_empty() {
+            return Ok(vec![Message::Response(ResponseMessage::NoMatchingSongsError)]);
+        }
+
+        let metadata = if songs.len() == 1 {
+            let song_metadata = &songs[0].metadata;
+            log::trace!("Resolved song query as {} (\"{}\")", song_metadata.url, song_metadata.title);
+            QueuedSongsMetadata::Single(song_metadata.clone())
+        } else {
+            log::trace!("Resolved song query as {} songs", songs.len());
+            QueuedSongsMetadata::Multiple(songs.len())
         };
 
-        let (delegate, song) = match futures::try_join!(delegate_future, song_future) {
-            Ok((delegate, song)) => (delegate, song),
-            Err(crate::error::Error::Backend(mrvn_back_ytdl::Error::NoSongsFound)) => {
-                return Ok(vec![Message::Response(ResponseMessage::NoMatchingSongsError)]);
-            },
-            Err(err) => return Err(err),
-        };
+        guild_model.push_entries(user_id, songs);
 
-        let song_metadata = song.metadata.clone();
-        log::trace!("Resolved song query as {} (\"{}\")", song_metadata.url, song_metadata.title);
-
-        guild_model.push_entry(user_id, song);
-
-        // From this point on the user needs to be in a channel, otherwise the song will only stay
+        // From this point on the user needs to be in a channel, otherwise the songs will only stay
         // queued.
         let channel_id = match delegate.get_user_voice_channel(user_id) {
             Some(channel) => channel,
             None => {
                 log::trace!("User is not in any voice channel, song will remain queued");
-                return Ok(vec![Message::Response(ResponseMessage::Queued {
-                    song_title: song_metadata.title,
-                    song_url: song_metadata.url,
-                })])
+                return Ok(vec![Message::Response(match metadata {
+                    QueuedSongsMetadata::Single(song_metadata) => ResponseMessage::Queued {
+                        song_title: song_metadata.title,
+                        song_url: song_metadata.url,
+                    },
+                    QueuedSongsMetadata::Multiple(count) => ResponseMessage::QueuedMultiple { count }
+                })]);
             },
         };
 
@@ -236,10 +253,13 @@ impl Frontend {
             Some(speaker) => speaker,
             None => {
                 log::trace!("No speakers are available to handle playback, song will remain queued");
-                return Ok(vec![Message::Response(ResponseMessage::QueuedNoSpeakers {
-                    song_title: song_metadata.title,
-                    song_url: song_metadata.url,
-                })])
+                return Ok(vec![Message::Response(match metadata {
+                    QueuedSongsMetadata::Single(song_metadata) => ResponseMessage::QueuedNoSpeakers {
+                        song_title: song_metadata.title,
+                        song_url: song_metadata.url,
+                    },
+                    QueuedSongsMetadata::Multiple(count) => ResponseMessage::QueuedMultipleNoSpeakers { count }
+                })]);
             }
         };
 
@@ -248,47 +268,67 @@ impl Frontend {
             NextEntry::Entry(song) => song,
             NextEntry::AlreadyPlaying | NextEntry::NoneAvailable => {
                 log::trace!("Channel is already playing, song will remain queued");
-                return Ok(vec![Message::Response(ResponseMessage::Queued {
-                    song_title: song_metadata.title,
-                    song_url: song_metadata.url,
-                })])
+                return Ok(vec![Message::Response(match metadata {
+                    QueuedSongsMetadata::Single(song_metadata) => ResponseMessage::Queued {
+                        song_title: song_metadata.title,
+                        song_url: song_metadata.url,
+                    },
+                    QueuedSongsMetadata::Multiple(count) => ResponseMessage::QueuedMultiple { count }
+                })]);
             }
         };
 
         let next_metadata = next_song.metadata.clone();
         log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-        guild_speaker.play(channel_id, next_song, EndedDelegate {
+        guild_speaker.play(channel_id, next_song, &self.config.get_play_config(), EndedDelegate {
             frontend: self.clone(),
             ctx: ctx.clone(),
             guild_id,
             channel_id,
         }).await.map_err(crate::error::Error::Backend)?;
 
-        // We could be in one of two states:
-        //  - The song that's now playing is the one we just queued, in which case we only show a
-        //    "playing" message.
-        //  - We queued a song and started a different song, which can happen if there were other
-        //    songs waiting but we weren't playing at the time. In this case we show a "queued"
+        // We could be in one of three states:
+        //  - One song was queued, and we're now playing that song. We only show a "playing"
+        //    message.
+        //  - Multiple songs were queued, and we're playing the first one. We show a "queued"
         //    message and a "playing" message.
-        if next_metadata.url == song_metadata.url {
-            Ok(vec![Message::Action(ActionMessage::PlayingResponse {
-                song_title: song_metadata.title,
-                song_url: song_metadata.url,
-                voice_channel_id: channel_id,
-            })])
-        } else {
-            Ok(vec![
-                Message::Response(ResponseMessage::Queued {
-                    song_title: song_metadata.title,
-                    song_url: song_metadata.url,
-                }),
-                Message::Action(ActionMessage::Playing {
-                    song_title: next_metadata.title,
-                    song_url: next_metadata.url,
-                    voice_channel_id: channel_id,
-                    user_id: next_metadata.user_id,
-                })
-            ])
+        //    todo: maybe we should combine these in this case
+        // - We queued one or more songs and started a different song, which can happen if there
+        //   were other songs waiting but we weren't playing at the time.
+        match metadata {
+            QueuedSongsMetadata::Single(song_metadata) => {
+                if next_metadata.url == song_metadata.url {
+                    Ok(vec![Message::Action(ActionMessage::PlayingResponse {
+                        song_title: song_metadata.title,
+                        song_url: song_metadata.url,
+                        voice_channel_id: channel_id,
+                    })])
+                } else {
+                    Ok(vec![
+                        Message::Response(ResponseMessage::Queued {
+                            song_title: song_metadata.title,
+                            song_url: song_metadata.url,
+                        }),
+                        Message::Action(ActionMessage::Playing {
+                            song_title: next_metadata.title,
+                            song_url: next_metadata.url,
+                            voice_channel_id: channel_id,
+                            user_id: next_metadata.user_id,
+                        })
+                    ])
+                }
+            }
+            QueuedSongsMetadata::Multiple(count) => {
+                Ok(vec![
+                    Message::Response(ResponseMessage::QueuedMultiple { count }),
+                    Message::Action(ActionMessage::Playing {
+                        song_title: next_metadata.title,
+                        song_url: next_metadata.url,
+                        voice_channel_id: channel_id,
+                        user_id: next_metadata.user_id,
+                    })
+                ])
+            }
         }
     }
 
@@ -348,7 +388,7 @@ impl Frontend {
 
         let next_metadata = next_song.metadata.clone();
         log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-        guild_speaker.play(channel_id, next_song, EndedDelegate {
+        guild_speaker.play(channel_id, next_song, &self.config.get_play_config(), EndedDelegate {
             frontend: self.clone(),
             ctx: ctx.clone(),
             guild_id,
@@ -371,24 +411,38 @@ impl Frontend {
         guild_model: &mut GuildModel<Song>,
         term: &str,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
+        let play_config = self.config.get_play_config();
+
         let delegate_future = ModelDelegate::new(ctx, guild_id);
-        let song_future = async {
-            Song::load(term, user_id).await.map_err(crate::error::Error::Backend)
+        let song_future = Song::load(term, user_id, &play_config).map_err(crate::error::Error::Backend);
+
+        let (delegate, songs) = match futures::try_join!(delegate_future, song_future) {
+            Ok(data) => data,
+            Err(crate::error::Error::Backend(mrvn_back_ytdl::Error::UnsupportedUrl)) => {
+                return Ok(vec![Message::Response(ResponseMessage::UnsupportedSiteError)]);
+            }
+            Err(why) => return Err(why),
         };
 
-        let (delegate, song) = match futures::try_join!(delegate_future, song_future) {
-            Ok((delegate, song)) => (delegate, song),
-            Err(crate::error::Error::Backend(mrvn_back_ytdl::Error::NoSongsFound)) => {
-                return Ok(vec![Message::Response(ResponseMessage::NoMatchingSongsError)]);
-            },
-            Err(err) => return Err(err),
+        if songs.len() == 1 {
+            let song_metadata = &songs[0].metadata;
+            log::trace!("Resolved song query as {} (\"{}\")", song_metadata.url, song_metadata.title);
+        } else {
+            log::trace!("Resolved song query as {} songs", songs.len());
+        }
+
+        let mut songs_iter = songs.into_iter();
+        let song = match songs_iter.next() {
+            Some(song) => song,
+            None => return Ok(vec![Message::Response(ResponseMessage::NoMatchingSongsError)]),
         };
 
         let song_metadata = song.metadata.clone();
-        log::trace!("Resolved song query as {} (\"{}\")", song_metadata.url, song_metadata.title);
-
         let maybe_channel_id = delegate.get_user_voice_channel(user_id);
-        let channel_id = match guild_model.replace_entry(user_id, maybe_channel_id, song) {
+        let replace_status = guild_model.replace_entry(user_id, maybe_channel_id, song);
+        guild_model.push_entries(user_id, songs_iter);
+
+        let channel_id = match replace_status {
             // If the song was queued, no playback changes are needed so we send a status message
             // and leave it there. But if the model indicated we're replacing the current song,
             // we need to start playing the next song.
@@ -434,7 +488,7 @@ impl Frontend {
 
         let next_metadata = next_song.metadata.clone();
         log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-        guild_speaker.play(channel_id, next_song, EndedDelegate {
+        guild_speaker.play(channel_id, next_song, &self.config.get_play_config(), EndedDelegate {
             frontend: self.clone(),
             ctx: ctx.clone(),
             guild_id,
@@ -671,7 +725,7 @@ impl Frontend {
             Some(song) => {
                 let next_metadata = song.metadata.clone();
                 log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-                ended_handle.play(channel_id, song, EndedDelegate {
+                ended_handle.play(channel_id, song, &self.config.get_play_config(), EndedDelegate {
                     frontend: self.clone(),
                     ctx: ctx.clone(),
                     guild_id,

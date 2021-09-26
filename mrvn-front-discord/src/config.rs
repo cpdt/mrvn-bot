@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use serde::de::Error;
+use mrvn_back_ytdl::PlayConfig;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandBot {
@@ -16,6 +17,18 @@ pub struct VoiceBot {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct YtdlConfig {
+    pub name: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FfmpegConfig {
+    pub name: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     #[serde(deserialize_with = "from_hex")]
     pub embed_color: u32,
@@ -25,6 +38,11 @@ pub struct Config {
     pub disconnect_min_inactive_secs: u64,
     pub disconnect_check_interval_secs: u64,
     pub only_disconnect_when_alone: bool,
+
+    pub search_prefix: String,
+    pub host_blocklist: Vec<String>,
+    pub ytdl: YtdlConfig,
+    pub ffmpeg: FfmpegConfig,
 
     pub command_bot: CommandBot,
     pub voice_bots: Vec<VoiceBot>,
@@ -57,6 +75,17 @@ impl Config {
                 .map(|(_, value)| *value)
                 .unwrap_or("")
         }).into_owned()
+    }
+
+    pub fn get_play_config(&self) -> PlayConfig {
+        PlayConfig {
+            search_prefix: &self.search_prefix,
+            host_blocklist: &self.host_blocklist,
+            ytdl_name: &self.ytdl.name,
+            ytdl_args: &self.ytdl.args,
+            ffmpeg_name: &self.ffmpeg.name,
+            ffmpeg_args: &self.ffmpeg.args,
+        }
     }
 }
 
