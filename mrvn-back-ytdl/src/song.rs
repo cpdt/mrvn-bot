@@ -139,9 +139,11 @@ impl Song {
             headers.insert(reqwest::header::HeaderName::from_bytes(key.as_bytes()).unwrap(), value.parse().unwrap());
         }
 
-        let request_builder = reqwest::Client::builder()
-            .build()
-            .map_err(Error::Http)?
+        lazy_static::lazy_static! {
+            static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::builder().build().unwrap();
+        }
+
+        let request_builder = HTTP_CLIENT
             .get(&self.download_url)
             .headers(headers);
         let source = StreamingSource::new(config, request_builder).await?;
