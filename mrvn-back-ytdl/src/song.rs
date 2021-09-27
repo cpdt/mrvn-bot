@@ -37,11 +37,11 @@ pub struct PlayConfig<'s> {
 }
 
 #[derive(serde::Deserialize)]
-struct YtdlOutput<'s> {
-    pub title: &'s str,
-    pub webpage_url: &'s str,
-    pub url: &'s str,
-    pub http_headers: HashMap<&'s str, &'s str>,
+struct YtdlOutput {
+    pub title: String,
+    pub webpage_url: String,
+    pub url: String,
+    pub http_headers: HashMap<String, String>,
 }
 
 impl Song {
@@ -205,23 +205,11 @@ impl StreamingSource {
             let mut received_bytes = 0;
 
             loop {
-                let mut received_this_request = 0;
-
                 // Pipe the data to FFMPEG
-                loop {
-                    let chunk = match response.chunk().await {
-                        Ok(Some(chunk)) => chunk,
-                        Ok(None) => break,
-                        Err(why) => {
-                            log::warn!("Error while reading stream: {}", why);
-                            break;
-                        }
-                    };
-
-                    received_bytes += chunk.len() as u64;
-                    received_this_request += chunk.len() as u64;
-                    ffmpeg_in.write(chunk.as_ref()).await.map_err(Error::Io)?;
-                }
+                let received_this_request = pipe_response(&mut response, &mut ffmpeg_in)
+                    .await
+                    .map_err(Error::Io)?;
+                received_bytes += received_this_request;
 
                 // Some remotes close the request after a certain timeout. To avoid just ending
                 // playback when this happens, under certain circumstances we can restart the
@@ -297,4 +285,38 @@ impl std::io::Seek for StreamingSource {
     fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
         panic!("Attempting to seek on non-seekable streaming source");
     }
+}
+
+async fn pipe_chunk(mut chunk: &[u8], stream: &mut tokio::process::ChildStdin) -> std::io::Result<u64> {
+    let mut total_written_bytes = 0;
+    while !chunk.is_empty() {
+        let written_bytes = stream.write(chunk).await?;
+        total_written_bytes += written_bytes as u64;
+
+        if written_bytes == 0 {
+            log::warn!("Skipping {} bytes while streaming", chunk.len());
+            break;
+        }
+
+        chunk = &chunk[written_bytes..];
+    }
+    Ok(total_written_bytes)
+}
+
+async fn pipe_response(response: &mut reqwest::Response, stream: &mut tokio::process::ChildStdin) -> std::io::Result<u64> {
+    let mut total_received_bytes = 0;
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(why) => {
+                log::warn!("Error while reading stream: {}", why);
+                break;
+            }
+        };
+
+        total_received_bytes += chunk.len() as u64;
+        pipe_chunk(chunk.as_ref(), stream).await?;
+    }
+    Ok(total_received_bytes)
 }
