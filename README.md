@@ -4,6 +4,7 @@ MRVN is a Discord music player bot. It has a few neat features:
 
  - Can play videos and streams from Youtube, Soundcloud, Twitch, and
    [many more](https://ytdl-org.github.io/youtube-dl/supportedsites.html).
+   Sites can also be blocked, and the default search can be changed from Youtube.
  - Exclusively uses Discord application commands.
  - Multi-channel support: allows simultaneous playback in multiple channels by
    using multiple bot applications.
