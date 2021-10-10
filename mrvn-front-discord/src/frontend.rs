@@ -1,4 +1,4 @@
-use mrvn_back_ytdl::{Brain, Song, EndedHandler, GuildSpeakerEndedHandle};
+use mrvn_back_ytdl::{Brain, Song, EndedHandler, GuildSpeakerEndedHandle, GuildSpeakerEndedRef, GuildSpeakerRef};
 use mrvn_model::{AppModel, GuildModel, NextEntry, VoteStatus, ReplaceStatus, VoteType};
 use std::sync::Arc;
 use serenity::{prelude::*, model::prelude::{UserId, GuildId, interactions, application_command}};
@@ -279,13 +279,7 @@ impl Frontend {
         };
 
         let next_metadata = next_song.metadata.clone();
-        log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-        guild_speaker.play(channel_id, next_song, &self.config.get_play_config(), EndedDelegate {
-            frontend: self.clone(),
-            ctx: ctx.clone(),
-            guild_id,
-            channel_id,
-        }).await.map_err(crate::error::Error::Backend)?;
+        self.play_to_speaker(ctx, guild_model, guild_speaker, channel_id, next_song).await?;
 
         // We could be in one of three states:
         //  - One song was queued, and we're now playing that song. We only show a "playing"
@@ -387,13 +381,7 @@ impl Frontend {
         };
 
         let next_metadata = next_song.metadata.clone();
-        log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-        guild_speaker.play(channel_id, next_song, &self.config.get_play_config(), EndedDelegate {
-            frontend: self.clone(),
-            ctx: ctx.clone(),
-            guild_id,
-            channel_id,
-        }).await.map_err(crate::error::Error::Backend)?;
+        self.play_to_speaker(ctx, guild_model, guild_speaker, channel_id, next_song).await?;
 
         Ok(vec![Message::Action(ActionMessage::Playing {
             song_title: next_metadata.title,
@@ -487,13 +475,7 @@ impl Frontend {
         };
 
         let next_metadata = next_song.metadata.clone();
-        log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-        guild_speaker.play(channel_id, next_song, &self.config.get_play_config(), EndedDelegate {
-            frontend: self.clone(),
-            ctx: ctx.clone(),
-            guild_id,
-            channel_id,
-        }).await.map_err(crate::error::Error::Backend)?;
+        self.play_to_speaker(ctx, guild_model, guild_speaker, channel_id, next_song).await?;
 
         // We could be in one of two states:
         //  - The song that's now playing is the one we just queued, in which case we only show a
@@ -679,18 +661,41 @@ impl Frontend {
         }
     }
 
-    async fn handle_playback_ended(self: Arc<Self>, ctx: Context, guild_id: GuildId, channel_id: ChannelId, ended_handle: GuildSpeakerEndedHandle) {
+    async fn handle_playback_ended(self: Arc<Self>, ctx: Context, started_channel_id: ChannelId, ended_handle: GuildSpeakerEndedHandle) {
         log::trace!("Playback has ended, preparing to play the next available song");
 
-        let guild_model_handle = self.model.get(guild_id);
+        let (state, speaker_ended_ref) = ended_handle.lock().await;
+        let guild_model_handle = self.model.get(state.guild_id);
         let mut guild_model = guild_model_handle.lock().await;
-
         let maybe_message_channel = guild_model.message_channel();
-        let messages = self.continue_channel_playback(&ctx, guild_id, guild_model.deref_mut(), channel_id, ended_handle).await;
+
+        let messages = match state.channel_id {
+            Some(channel_id) => {
+                self.continue_channel_playback(&ctx, state.guild_id, guild_model.deref_mut(), started_channel_id, channel_id, speaker_ended_ref).await
+            }
+            None => {
+                // The speaker that played a song is no longer in a voice channel. Interpret
+                // this as a forced stop command, instead of just trying to play the next song.
+                guild_model.set_channel_stopped(started_channel_id);
+                speaker_ended_ref.stop();
+                match state.ended_metadata {
+                    Some(active_metadata) => Ok(vec![
+                        Message::Response(ResponseMessage::Stopped {
+                            song_title: active_metadata.title.clone(),
+                            song_url: active_metadata.url.clone(),
+                            voice_channel_id: started_channel_id,
+                            user_id: active_metadata.user_id,
+                        })
+                    ]),
+                    None => Ok(Vec::new()),
+                }
+            }
+        };
+
         let send_result = match (messages, maybe_message_channel) {
             (Ok(messages), Some(message_channel)) => {
                 send_messages(&self.config, &ctx, SendMessageDestination::Channel(message_channel), guild_model.deref_mut(), messages).await
-            },
+            }
             (Err(why), Some(message_channel)) => {
                 log::error!("Error while continuing playback: {}", why);
                 send_messages(&self.config, &ctx, SendMessageDestination::Channel(message_channel), guild_model.deref_mut(), vec![
@@ -711,41 +716,71 @@ impl Frontend {
         ctx: &Context,
         guild_id: GuildId,
         guild_model: &mut GuildModel<Song>,
-        channel_id: ChannelId,
-        ended_handle: GuildSpeakerEndedHandle,
-    ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        if guild_model.is_channel_stopped(channel_id) {
+        started_channel_id: ChannelId,
+        current_channel_id: ChannelId,
+        speaker_ended_ref: GuildSpeakerEndedRef<'_>,
+    ) -> Result<Vec<Message>, crate::error::Error> {
+        // If the speaker has moved channels, simply indicate the original channel as stopped and
+        // do not play anything in the new channel. This ensures we follow the behavior of not
+        // playing songs until the user instructs the bot to.
+        if started_channel_id != current_channel_id {
+            log::trace!("Speaker has switched channel, not playing any more songs.");
+            guild_model.set_channel_stopped(started_channel_id);
+            speaker_ended_ref.stop();
+            return Ok(Vec::new());
+        }
+
+        // Don't play anything more if the channel was stopped.
+        if guild_model.is_channel_stopped(current_channel_id) {
             log::trace!("Channel has been stopped, not playing any more songs.");
-            ended_handle.stop().await;
+            speaker_ended_ref.stop();
             return Ok(Vec::new());
         }
 
         let delegate = ModelDelegate::new(&ctx, guild_id).await?;
-        match guild_model.next_channel_entry_finished(&delegate, channel_id) {
+        match guild_model.next_channel_entry_finished(&delegate, current_channel_id) {
             Some(song) => {
                 let next_metadata = song.metadata.clone();
                 log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-                ended_handle.play(channel_id, song, &self.config.get_play_config(), EndedDelegate {
+                if let Err(why) = speaker_ended_ref.play(song, &self.config.get_play_config(), EndedDelegate {
                     frontend: self.clone(),
                     ctx: ctx.clone(),
-                    guild_id,
-                    channel_id,
-                }).await.map_err(crate::error::Error::Backend)?;
-
+                    started_channel_id: current_channel_id,
+                }).await.map_err(crate::error::Error::Backend) {
+                    // Cancel playing the song since an error occurred
+                    guild_model.set_channel_stopped(current_channel_id);
+                    return Err(why);
+                }
                 Ok(vec![Message::Action(ActionMessage::Playing {
                     song_title: next_metadata.title,
                     song_url: next_metadata.url,
-                    voice_channel_id: channel_id,
+                    voice_channel_id: current_channel_id,
                     user_id: next_metadata.user_id,
                 })])
             }
             None => {
                 log::trace!("No songs are available to play in the channel, nothing will be played");
-
-                ended_handle.stop().await;
-                return Ok(vec![Message::Action(ActionMessage::Finished {
-                    voice_channel_id: channel_id,
+                speaker_ended_ref.stop();
+                Ok(vec![Message::Action(ActionMessage::Finished {
+                    voice_channel_id: current_channel_id,
                 })])
+            }
+        }
+    }
+
+    async fn play_to_speaker(self: &Arc<Self>, ctx: &Context, guild_model: &mut GuildModel<Song>, guild_speaker: &mut GuildSpeakerRef<'_>, channel_id: ChannelId, song: Song) -> Result<(), crate::error::Error> {
+        log::trace!("Playing \"{}\" to speaker", song.metadata.title);
+        let play_res = guild_speaker.play(channel_id, song, &self.config.get_play_config(), EndedDelegate {
+            frontend: self.clone(),
+            ctx: ctx.clone(),
+            started_channel_id: channel_id,
+        }).await;
+
+        match play_res {
+            Ok(()) => Ok(()),
+            Err(why) => {
+                guild_model.set_channel_stopped(channel_id);
+                return Err(crate::error::Error::Backend(why));
             }
         }
     }
@@ -754,12 +789,11 @@ impl Frontend {
 struct EndedDelegate {
     frontend: Arc<Frontend>,
     ctx: Context,
-    guild_id: GuildId,
-    channel_id: ChannelId,
+    started_channel_id: ChannelId,
 }
 
 impl EndedHandler for EndedDelegate {
     fn on_ended(self, ended_handle: GuildSpeakerEndedHandle) {
-        tokio::task::spawn(self.frontend.handle_playback_ended(self.ctx, self.guild_id, self.channel_id, ended_handle));
+        tokio::task::spawn(self.frontend.handle_playback_ended(self.ctx, self.started_channel_id, ended_handle));
     }
 }
