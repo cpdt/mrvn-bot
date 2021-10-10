@@ -798,6 +798,7 @@ dependencies = [
  "serenity",
  "songbird",
  "tokio",
+ "tryhard",
  "url",
 ]
 
@@ -1677,6 +1678,17 @@ name = "try-lock"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59547bce71d9c38b83d9c0e92b6066c4253371f15005def0c30d9657f50c7642"
+
+[[package]]
+name = "tryhard"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30cd27b84d4410536f50315f5179a49b651c365328bbeff9900b4c65fc3b92fa"
+dependencies = [
+ "futures",
+ "pin-project",
+ "tokio",
+]
 
 [[package]]
 name = "tungstenite"

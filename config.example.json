@@ -5,6 +5,7 @@
   "disconnect_min_inactive_secs": 600,
   "disconnect_check_interval_secs": 600,
   "only_disconnect_when_alone": true,
+  "request_retry_times": 2,
   "search_prefix": "ytsearch1",
   "host_blocklist": [],
   "ytdl": {

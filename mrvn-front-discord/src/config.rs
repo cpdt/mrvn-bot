@@ -39,6 +39,8 @@ pub struct Config {
     pub disconnect_check_interval_secs: u64,
     pub only_disconnect_when_alone: bool,
 
+    pub request_retry_times: u32,
+
     pub search_prefix: String,
     pub host_blocklist: Vec<String>,
     pub ytdl: YtdlConfig,
@@ -79,6 +81,7 @@ impl Config {
 
     pub fn get_play_config(&self) -> PlayConfig {
         PlayConfig {
+            request_retry_times: self.request_retry_times,
             search_prefix: &self.search_prefix,
             host_blocklist: &self.host_blocklist,
             ytdl_name: &self.ytdl.name,

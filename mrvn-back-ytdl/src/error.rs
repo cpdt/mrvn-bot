@@ -7,6 +7,7 @@ pub enum Error {
     SongbirdJoin(songbird::error::JoinError),
     SongbirdTrack(songbird::error::TrackError),
     UnsupportedUrl,
+    NoDataProvided,
 }
 
 impl std::fmt::Display for Error {
@@ -19,6 +20,7 @@ impl std::fmt::Display for Error {
             Error::SongbirdJoin(err) => err.fmt(f),
             Error::SongbirdTrack(err) => err.fmt(f),
             Error::UnsupportedUrl => write!(f, "Unsupported URL"),
+            Error::NoDataProvided => write!(f, "No data provided"),
         }
     }
 }

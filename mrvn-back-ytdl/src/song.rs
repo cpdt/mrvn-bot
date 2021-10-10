@@ -28,6 +28,7 @@ pub struct Song {
 }
 
 pub struct PlayConfig<'s> {
+    pub request_retry_times: u32,
     pub search_prefix: &'s str,
     pub host_blocklist: &'s [String],
     pub ytdl_name: &'s str,
@@ -172,15 +173,19 @@ struct StreamingSource {
     ffmpeg_out: std::process::ChildStdout,
 }
 
+async fn send_request(request_builder: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
+    let response = request_builder.send().await.map_err(Error::Http)?;
+    match response.content_length() {
+        Some(0) => Err(Error::NoDataProvided),
+        _ => Ok(response),
+    }
+}
+
 impl StreamingSource {
     pub async fn new(config: &PlayConfig<'_>, request_builder: reqwest::RequestBuilder) -> Result<Self, Error> {
-        let initial_response = request_builder
-            .try_clone()
-            .unwrap()
-            .send()
-            .await
-            .map_err(Error::Http)?;
-
+        let initial_response = tryhard::retry_fn(|| send_request(request_builder.try_clone().unwrap()))
+            .retries(config.request_retry_times)
+            .await?;
         let content_length = initial_response.content_length();
         let (abort_download, abort_registration) = AbortHandle::new_pair();
 
