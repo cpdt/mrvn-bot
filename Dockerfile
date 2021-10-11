@@ -1,7 +1,6 @@
-FROM rust:slim-bullseye as builder
+FROM rust:buster as builder
 RUN curl -L https://yt-dl.org/downloads/2021.06.06/youtube-dl -o /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl
 WORKDIR /usr/src/mrvn-bot
-RUN apt-get update && apt-get install -y libopus0 libopus-dev pkg-config ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY . .
 RUN cargo install --path ./mrvn-front-discord
 
