@@ -28,7 +28,6 @@ pub struct Song {
 }
 
 pub struct PlayConfig<'s> {
-    pub request_retry_times: u32,
     pub search_prefix: &'s str,
     pub host_blocklist: &'s [String],
     pub ytdl_name: &'s str,
@@ -43,6 +42,27 @@ struct YtdlOutput {
     pub webpage_url: String,
     pub url: String,
     pub http_headers: HashMap<String, String>,
+}
+
+fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
+    if line.starts_with("ERROR:") {
+        return Err(Error::UnsupportedUrl);
+    }
+
+    let value: YtdlOutput = serde_json::from_str(&line).map_err(Error::Parse)?;
+
+    Ok(Song {
+        metadata: SongMetadata {
+            title: value.title.to_string(),
+            url: value.webpage_url.to_string(),
+            user_id,
+        },
+        download_url: value.url.to_string(),
+        http_headers: value.http_headers
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    })
 }
 
 impl Song {
@@ -80,30 +100,53 @@ impl Song {
 
         let mut songs = Vec::new();
         while let Some(line) = lines.next_line().await.map_err(Error::Io)? {
-            if line.starts_with("ERROR:") {
-                return Err(Error::UnsupportedUrl);
-            }
-
-            let value: YtdlOutput = serde_json::from_str(&line).map_err(Error::Parse)?;
-
-            songs.push(Song {
-                metadata: SongMetadata {
-                    title: value.title.to_string(),
-                    url: value.webpage_url.to_string(),
-                    user_id,
-                },
-                download_url: value.url.to_string(),
-                http_headers: value.http_headers
-                    .iter()
-                    .map(|(key, value)| (key.to_string(), value.to_string()))
-                    .collect()
-            })
+            songs.push(parse_ytdl_line(&line , user_id)?);
         }
 
         Ok(songs)
     }
 
+    pub async fn fetch_one(webpage_url: &str, user_id: UserId, config: &PlayConfig<'_>) -> Result<Song, Error> {
+        let mut ytdl = TokioCommand::new(config.ytdl_name)
+            .args(config.ytdl_args)
+            .args(&[
+                "--dump-json",
+                "--ignore-config",
+                "--no-warnings",
+                "--no-playlist",
+                webpage_url,
+                "-o",
+                "-"
+            ])
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .map_err(Error::Io)?;
+        let first_line = BufReader::new(ytdl.stderr.take().unwrap())
+            .lines()
+            .next_line()
+            .await
+            .map_err(Error::Io)?
+            .ok_or(Error::UnsupportedUrl)?;
+
+        parse_ytdl_line(&first_line, user_id)
+    }
+
     pub async fn get_input(&self, config: &PlayConfig<'_>) -> Result<songbird::input::Input, Error> {
+        // The cached download URL might have become invalid since fetching it. We assume it's fine
+        // but fetch a new one from youtube-dl if playback fails.
+        match self.get_input_no_retry(config).await {
+            Ok(input) => Ok(input),
+            Err(why) => {
+                log::error!("Error opening stream to play {}: {}", &self.metadata.url, why);
+                let refetch_song = Song::fetch_one(&self.metadata.url, self.metadata.user_id, config).await?;
+                refetch_song.get_input_no_retry(config).await
+            }
+        }
+    }
+
+    async fn get_input_no_retry(&self, config: &PlayConfig<'_>) -> Result<songbird::input::Input, Error> {
         // If this is a livestream, directly call FFMPEG instead of doing the download step ourself
         if self.download_url.ends_with(".m3u8") {
             let http_headers: String = self.http_headers
@@ -173,19 +216,16 @@ struct StreamingSource {
     ffmpeg_out: std::process::ChildStdout,
 }
 
-async fn send_request(request_builder: reqwest::RequestBuilder) -> Result<reqwest::Response, Error> {
-    let response = request_builder.send().await.map_err(Error::Http)?;
-    match response.content_length() {
-        Some(0) => Err(Error::NoDataProvided),
-        _ => Ok(response),
-    }
-}
-
 impl StreamingSource {
     pub async fn new(config: &PlayConfig<'_>, request_builder: reqwest::RequestBuilder) -> Result<Self, Error> {
-        let initial_response = tryhard::retry_fn(|| send_request(request_builder.try_clone().unwrap()))
-            .retries(config.request_retry_times)
-            .await?;
+        let initial_response = request_builder
+            .try_clone()
+            .unwrap()
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(Error::Http)?;
+
         let content_length = initial_response.content_length();
         let (abort_download, abort_registration) = AbortHandle::new_pair();
 
@@ -240,6 +280,7 @@ impl StreamingSource {
                     .header(reqwest::header::RANGE, format!("bytes={}-{}", received_bytes, content_length))
                     .send()
                     .await
+                    .and_then(reqwest::Response::error_for_status)
                     .map_err(Error::Http)?;
             }
 
