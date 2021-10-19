@@ -664,14 +664,21 @@ impl Frontend {
     async fn handle_playback_ended(self: Arc<Self>, ctx: Context, started_channel_id: ChannelId, ended_handle: GuildSpeakerEndedHandle) {
         log::trace!("Playback has ended, preparing to play the next available song");
 
-        let (state, speaker_ended_ref) = ended_handle.lock().await;
-        let guild_model_handle = self.model.get(state.guild_id);
+        let guild_model_handle = self.model.get(ended_handle.guild_id());
         let mut guild_model = guild_model_handle.lock().await;
         let maybe_message_channel = guild_model.message_channel();
 
+        let (state, speaker_ended_ref) = ended_handle.lock().await;
         let messages = match state.channel_id {
             Some(channel_id) => {
-                self.continue_channel_playback(&ctx, state.guild_id, guild_model.deref_mut(), started_channel_id, channel_id, speaker_ended_ref).await
+                self.continue_channel_playback(
+                    &ctx,
+                    ended_handle.guild_id(),
+                    guild_model.deref_mut(),
+                    started_channel_id,
+                    channel_id,
+                    speaker_ended_ref
+                ).await
             }
             None => {
                 // The speaker that played a song is no longer in a voice channel. Interpret

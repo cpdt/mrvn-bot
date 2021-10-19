@@ -297,10 +297,13 @@ pub struct GuildSpeakerEndedHandle {
 }
 
 impl GuildSpeakerEndedHandle {
+    pub fn guild_id(&self) -> GuildId {
+        self.guild_speaker_handle.guild_id
+    }
+
     pub async fn lock(&self) -> (GuildSpeakerEndedState, GuildSpeakerEndedRef<'_>) {
         let guild_speaker_ref = self.guild_speaker_handle.lock().await;
         let ended_state = GuildSpeakerEndedState {
-            guild_id: self.guild_speaker_handle.guild_id,
             channel_id: guild_speaker_ref.current_channel(),
             ended_metadata: guild_speaker_ref.active_metadata(),
         };
@@ -311,7 +314,6 @@ impl GuildSpeakerEndedHandle {
 }
 
 pub struct GuildSpeakerEndedState {
-    pub guild_id: GuildId,
     pub channel_id: Option<ChannelId>,
     pub ended_metadata: Option<SongMetadata>,
 }
