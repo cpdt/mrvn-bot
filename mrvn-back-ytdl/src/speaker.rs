@@ -322,9 +322,9 @@ pub struct GuildSpeakerEndedRef<'handle> {
 }
 
 impl<'handle> GuildSpeakerEndedRef<'handle> {
-    pub async fn play<Ended: EndedHandler>(mut self, song: Song, config: &PlayConfig<'_>, ended_handler: Ended) -> Result<(), crate::error::Error> {
+    pub async fn play<Ended: EndedHandler>(mut self, song: Song, config: &PlayConfig<'_>, ended_handler: Ended) -> Result<(), (GuildSpeakerEndedRef<'handle>, crate::error::Error)> {
         match self.guild_speaker_ref.current_channel() {
-            Some(channel_id) => self.guild_speaker_ref.play(channel_id, song, config, ended_handler).await,
+            Some(channel_id) => self.guild_speaker_ref.play(channel_id, song, config, ended_handler).await.map_err(|err| (self, err)),
             None => {
                 self.stop();
                 Ok(())
