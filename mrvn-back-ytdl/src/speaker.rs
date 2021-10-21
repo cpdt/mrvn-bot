@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use serenity::{prelude::*, model::prelude::*};
-use serenity::client::ClientBuilder;
-use crate::{Brain, Song, SongMetadata, PlayConfig};
+use crate::{Brain, PlayConfig, Song, SongMetadata};
 use dashmap::DashMap;
-use tokio::sync::MutexGuard;
+use serenity::client::ClientBuilder;
+use serenity::{model::prelude::*, prelude::*};
 use std::ops::DerefMut;
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::MutexGuard;
 
 pub struct SpeakerKey;
 
@@ -27,7 +27,9 @@ impl Speaker {
     }
 
     pub fn get(&self, guild_id: GuildId) -> GuildSpeakerHandle {
-        let guild_speaker = self.guilds.entry(guild_id)
+        let guild_speaker = self
+            .guilds
+            .entry(guild_id)
             .or_insert_with(|| Arc::new(Mutex::new(GuildSpeaker::new())))
             .clone();
         let current_call = self.songbird.get(guild_id);
@@ -39,20 +41,18 @@ impl Speaker {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=GuildSpeakerHandle> + '_ {
-        self.guilds
-            .iter()
-            .map(move |guild| {
-                let guild_id = guild.key().clone();
-                let guild_speaker = guild.value().clone();
-                let current_call = self.songbird.get(guild_id);
-                GuildSpeakerHandle {
-                    guild_id,
-                    songbird: self.songbird.clone(),
-                    guild_speaker,
-                    current_call,
-                }
-            })
+    pub fn iter(&self) -> impl Iterator<Item = GuildSpeakerHandle> + '_ {
+        self.guilds.iter().map(move |guild| {
+            let guild_id = *guild.key();
+            let guild_speaker = guild.value().clone();
+            let current_call = self.songbird.get(guild_id);
+            GuildSpeakerHandle {
+                guild_id,
+                songbird: self.songbird.clone(),
+                guild_speaker,
+                current_call,
+            }
+        })
     }
 }
 
@@ -66,8 +66,7 @@ impl SpeakerInit for ClientBuilder<'_> {
         let speaker = Arc::new(Speaker::new(songbird.clone()));
         brain.speakers.push(speaker.clone());
 
-        self
-            .voice_manager_arc(songbird)
+        self.voice_manager_arc(songbird)
             .type_map_insert::<SpeakerKey>(speaker)
     }
 }
@@ -109,7 +108,7 @@ impl GuildSpeakerHandle {
             current_call: match &self.current_call {
                 Some(call_handle) => Some(call_handle.lock().await),
                 None => None,
-            }
+            },
         }
     }
 }
@@ -149,23 +148,31 @@ impl<'handle> GuildSpeakerRef<'handle> {
     }
 
     pub fn active_metadata(&self) -> Option<SongMetadata> {
-        self.guild_speaker.playing_state
+        self.guild_speaker
+            .playing_state
             .as_ref()
             .map(|state| state.metadata.clone())
     }
 
-    pub async fn play<Ended: EndedHandler>(&mut self, channel_id: ChannelId, song: Song, config: &PlayConfig<'_>, ended_handler: Ended) -> Result<(), crate::error::Error> {
+    pub async fn play<Ended: EndedHandler>(
+        &mut self,
+        channel_id: ChannelId,
+        song: Song,
+        config: &PlayConfig<'_>,
+        ended_handler: Ended,
+    ) -> Result<(), crate::error::Error> {
         let input = song.get_input(config).await?;
 
         let track_handle = match &mut self.current_call {
             Some(call) if call.current_channel() == Some(channel_id.into()) => {
                 call.play_only_source(input)
-            },
+            }
             _ => {
                 // Ensure we don't deadlock by having a current_call lock
                 self.current_call = None;
 
-                let (call_handle, join_result) = self.songbird.join(self.guild_id, channel_id).await;
+                let (call_handle, join_result) =
+                    self.songbird.join(self.guild_id, channel_id).await;
                 if let Err(why) = join_result {
                     self.guild_speaker.playing_state = None;
                     return Err(crate::error::Error::SongbirdJoin(why));
@@ -173,20 +180,31 @@ impl<'handle> GuildSpeakerRef<'handle> {
 
                 let mut call = call_handle.lock().await;
                 call.remove_all_global_events();
-                call.add_global_event(songbird::Event::Core(songbird::CoreEvent::DriverDisconnect), GuildSpeakerDisconnectedEventHandler {
-                    guild_speaker: self.guild_speaker_ref.clone(),
-                });
+                call.add_global_event(
+                    songbird::Event::Core(songbird::CoreEvent::DriverDisconnect),
+                    GuildSpeakerDisconnectedEventHandler {
+                        guild_speaker: self.guild_speaker_ref.clone(),
+                    },
+                );
                 call.play_only_source(input)
             }
         };
 
-        track_handle.add_event(songbird::Event::Track(songbird::TrackEvent::End), GuildSpeakerEndedEventHandler {
-            data: Mutex::new(Some((ended_handler, GuildSpeakerEndedBuilder {
-                guild_id: self.guild_id,
-                songbird: self.songbird.clone(),
-                guild_speaker: self.guild_speaker_ref.clone(),
-            }))),
-        }).map_err(crate::error::Error::SongbirdTrack)?;
+        track_handle
+            .add_event(
+                songbird::Event::Track(songbird::TrackEvent::End),
+                GuildSpeakerEndedEventHandler {
+                    data: Mutex::new(Some((
+                        ended_handler,
+                        GuildSpeakerEndedBuilder {
+                            guild_id: self.guild_id,
+                            songbird: self.songbird.clone(),
+                            guild_speaker: self.guild_speaker_ref.clone(),
+                        },
+                    ))),
+                },
+            )
+            .map_err(crate::error::Error::SongbirdTrack)?;
         self.guild_speaker.playing_state = Some(GuildPlayingState {
             metadata: song.metadata,
             track: track_handle,
@@ -203,14 +221,20 @@ impl<'handle> GuildSpeakerRef<'handle> {
 
     pub fn stop(&mut self) -> Result<(), crate::error::Error> {
         if let Some(playing_state) = &mut self.guild_speaker.playing_state {
-            playing_state.track.stop().map_err(crate::error::Error::SongbirdTrack)?;
+            playing_state
+                .track
+                .stop()
+                .map_err(crate::error::Error::SongbirdTrack)?;
         }
         Ok(())
     }
 
     pub fn pause(&mut self) -> Result<(), crate::error::Error> {
         if let Some(playing_state) = &mut self.guild_speaker.playing_state {
-            playing_state.track.pause().map_err(crate::error::Error::SongbirdTrack)?;
+            playing_state
+                .track
+                .pause()
+                .map_err(crate::error::Error::SongbirdTrack)?;
             playing_state.is_paused = true;
         }
         Ok(())
@@ -218,7 +242,10 @@ impl<'handle> GuildSpeakerRef<'handle> {
 
     pub fn unpause(&mut self) -> Result<(), crate::error::Error> {
         if let Some(playing_state) = &mut self.guild_speaker.playing_state {
-            playing_state.track.play().map_err(crate::error::Error::SongbirdTrack)?;
+            playing_state
+                .track
+                .play()
+                .map_err(crate::error::Error::SongbirdTrack)?;
             playing_state.is_paused = false;
         }
         Ok(())
@@ -226,7 +253,9 @@ impl<'handle> GuildSpeakerRef<'handle> {
 
     pub async fn disconnect(&mut self) -> Result<(), crate::error::Error> {
         if let Some(call) = &mut self.current_call {
-            call.leave().await.map_err(crate::error::Error::SongbirdJoin)?;
+            call.leave()
+                .await
+                .map_err(crate::error::Error::SongbirdJoin)?;
         }
         Ok(())
     }
@@ -287,7 +316,7 @@ impl GuildSpeakerEndedBuilder {
                 songbird: self.songbird.clone(),
                 guild_speaker: self.guild_speaker.clone(),
                 current_call: self.songbird.get(self.guild_id),
-            }
+            },
         }
     }
 }
@@ -307,9 +336,7 @@ impl GuildSpeakerEndedHandle {
             channel_id: guild_speaker_ref.current_channel(),
             ended_metadata: guild_speaker_ref.active_metadata(),
         };
-        (ended_state, GuildSpeakerEndedRef {
-            guild_speaker_ref,
-        })
+        (ended_state, GuildSpeakerEndedRef { guild_speaker_ref })
     }
 }
 
@@ -324,9 +351,18 @@ pub struct GuildSpeakerEndedRef<'handle> {
 }
 
 impl<'handle> GuildSpeakerEndedRef<'handle> {
-    pub async fn play<Ended: EndedHandler>(mut self, song: Song, config: &PlayConfig<'_>, ended_handler: Ended) -> Result<(), (GuildSpeakerEndedRef<'handle>, crate::error::Error)> {
+    pub async fn play<Ended: EndedHandler>(
+        mut self,
+        song: Song,
+        config: &PlayConfig<'_>,
+        ended_handler: Ended,
+    ) -> Result<(), (GuildSpeakerEndedRef<'handle>, crate::error::Error)> {
         match self.guild_speaker_ref.current_channel() {
-            Some(channel_id) => self.guild_speaker_ref.play(channel_id, song, config, ended_handler).await.map_err(|err| (self, err)),
+            Some(channel_id) => self
+                .guild_speaker_ref
+                .play(channel_id, song, config, ended_handler)
+                .await
+                .map_err(|err| (self, err)),
             None => {
                 self.stop();
                 Ok(())

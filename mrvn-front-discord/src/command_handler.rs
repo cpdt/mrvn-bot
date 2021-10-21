@@ -1,6 +1,6 @@
-use serenity::{prelude::*, model::prelude::*};
-use std::sync::Arc;
 use crate::frontend::Frontend;
+use serenity::{model::prelude::*, prelude::*};
+use std::sync::Arc;
 
 pub struct CommandHandler {
     frontend: Arc<Frontend>,
@@ -8,9 +8,7 @@ pub struct CommandHandler {
 
 impl CommandHandler {
     pub fn new(frontend: Arc<Frontend>) -> Self {
-        CommandHandler {
-            frontend,
-        }
+        CommandHandler { frontend }
     }
 }
 

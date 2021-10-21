@@ -19,7 +19,10 @@ impl std::fmt::Display for Error {
             Error::UnknownCommand(command) => write!(f, "Received unknown command {}", command),
             Error::NoGuild => write!(f, "Command was not invoked from a guild"),
             Error::UnknownGuild(guild_id) => write!(f, "Unknown guild {}", guild_id),
-            Error::ModelPlayingSpeakerNotDesync => write!(f, "Out of sync: model says song is playing, but the speaker disagrees"),
+            Error::ModelPlayingSpeakerNotDesync => write!(
+                f,
+                "Out of sync: model says song is playing, but the speaker disagrees"
+            ),
         }
     }
 }

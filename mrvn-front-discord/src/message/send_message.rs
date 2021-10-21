@@ -1,13 +1,15 @@
+use crate::config::Config;
+use crate::message::Message;
+use futures::prelude::*;
+use mrvn_back_ytdl::Song;
+use mrvn_model::{GuildActionMessage, GuildModel};
+use serenity::model::prelude::ChannelId;
 use serenity::{
     client::Context,
-    model::interactions::{application_command::ApplicationCommandInteraction, InteractionResponseType}
+    model::interactions::{
+        application_command::ApplicationCommandInteraction, InteractionResponseType,
+    },
 };
-use mrvn_model::{GuildModel, GuildActionMessage};
-use mrvn_back_ytdl::Song;
-use futures::prelude::*;
-use crate::message::Message;
-use crate::config::Config;
-use serenity::model::prelude::ChannelId;
 
 #[derive(Clone, Copy)]
 pub enum SendMessageDestination<'interaction> {
@@ -15,7 +17,7 @@ pub enum SendMessageDestination<'interaction> {
     Interaction {
         interaction: &'interaction ApplicationCommandInteraction,
         is_edit: bool,
-    }
+    },
 }
 
 pub async fn send_messages(
@@ -50,19 +52,32 @@ pub async fn send_messages(
         SendMessageDestination::Interaction { .. } => messages_iter.next(),
     };
     let first_message_future = async {
-        if let (SendMessageDestination::Interaction { interaction, is_edit }, Some(first_message)) = (destination, maybe_first_message) {
+        if let (
+            SendMessageDestination::Interaction {
+                interaction,
+                is_edit,
+            },
+            Some(first_message),
+        ) = (destination, maybe_first_message)
+        {
             if is_edit {
-                interaction.edit_original_interaction_response(&ctx.http, |response| {
-                    response.create_embed(|embed| first_message.create_embed(embed, config))
-                }).await.map_err(crate::error::Error::Serenity)?;
+                interaction
+                    .edit_original_interaction_response(&ctx.http, |response| {
+                        response.create_embed(|embed| first_message.create_embed(embed, config))
+                    })
+                    .await
+                    .map_err(crate::error::Error::Serenity)?;
             } else {
-                interaction.create_interaction_response(&ctx.http, |response| {
-                    response
-                        .kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|data| {
-                            data.create_embed(|embed| first_message.create_embed(embed, config))
-                        })
-                }).await.map_err(crate::error::Error::Serenity)?;
+                interaction
+                    .create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|data| {
+                                data.create_embed(|embed| first_message.create_embed(embed, config))
+                            })
+                    })
+                    .await
+                    .map_err(crate::error::Error::Serenity)?;
             }
         }
         Ok(())
@@ -71,9 +86,12 @@ pub async fn send_messages(
     // Send each remaining message as a regular message. If the message is the possible one
     // action message, keep track of its ID so we can record it later.
     let remaining_messages_future = future::try_join_all(messages_iter.map(|message| async move {
-        let channel_message = message_channel_id.send_message(&ctx.http, |create_message| {
-            create_message.embed(|embed| message.create_embed(embed, config))
-        }).await.map_err(crate::error::Error::Serenity)?;
+        let channel_message = message_channel_id
+            .send_message(&ctx.http, |create_message| {
+                create_message.embed(|embed| message.create_embed(embed, config))
+            })
+            .await
+            .map_err(crate::error::Error::Serenity)?;
 
         if message.is_action() {
             Ok(Some(channel_message))
@@ -99,7 +117,11 @@ pub async fn send_messages(
     };
 
     // Execute all the message sending!
-    let (_, remaining_messages, _) = futures::try_join!(first_message_future, remaining_messages_future, delete_old_action_message_future)?;
+    let (_, remaining_messages, _) = futures::try_join!(
+        first_message_future,
+        remaining_messages_future,
+        delete_old_action_message_future
+    )?;
 
     // Set the guild's last action message to the message we sent, if there was one.
     // If we were expecting an action message but there isn't one collected after sending,
@@ -109,12 +131,13 @@ pub async fn send_messages(
         let maybe_sent_message = remaining_messages
             .iter()
             .find_map(|maybe_message| maybe_message.as_ref());
-        guild_model.set_last_action_message(maybe_sent_message.map(|sent_message| GuildActionMessage {
-            channel_id: sent_message.channel_id,
-            message_id: sent_message.id,
+        guild_model.set_last_action_message(maybe_sent_message.map(|sent_message| {
+            GuildActionMessage {
+                channel_id: sent_message.channel_id,
+                message_id: sent_message.id,
+            }
         }));
     }
 
     Ok(())
-
 }

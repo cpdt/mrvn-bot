@@ -1,11 +1,15 @@
 use crate::config::Config;
-use std::time::{Duration, Instant};
-use std::sync::Arc;
 use crate::frontend::Frontend;
 use futures::prelude::*;
 use mrvn_back_ytdl::GuildSpeakerHandle;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-async fn check_cleanup_for_speaker(guild_speaker_handle: GuildSpeakerHandle, cache: Arc<serenity::cache::Cache>, config: Arc<Config>) {
+async fn check_cleanup_for_speaker(
+    guild_speaker_handle: GuildSpeakerHandle,
+    cache: Arc<serenity::cache::Cache>,
+    config: Arc<Config>,
+) {
     let mut guild_speaker = guild_speaker_handle.lock().await;
 
     // Ignore the speaker if it's currently active or not even connected
@@ -47,24 +51,33 @@ async fn check_cleanup_for_speaker(guild_speaker_handle: GuildSpeakerHandle, cac
     // We've passed the conditions, disconnect
     match guild_speaker.disconnect().await {
         Ok(_) => log::debug!("Disconnected speaker due to inactivity"),
-        Err(why) => log::error!("Error when disconnecting speaker: {}", why)
+        Err(why) => log::error!("Error when disconnecting speaker: {}", why),
     }
 }
 
 async fn check_cleanup(frontend: Arc<Frontend>, cache: Arc<serenity::cache::Cache>) {
     log::trace!("Disconnecting inactive speakers");
     let work_start_time = Instant::now();
-    let futures = frontend.backend_brain.speakers
+    let futures = frontend
+        .backend_brain
+        .speakers
         .iter()
         .flat_map(|speaker| speaker.iter())
-        .map(|guild_speaker_handle| check_cleanup_for_speaker(guild_speaker_handle, cache.clone(), frontend.config.clone()));
+        .map(|guild_speaker_handle| {
+            check_cleanup_for_speaker(guild_speaker_handle, cache.clone(), frontend.config.clone())
+        });
 
     future::join_all(futures).await;
-    log::trace!("Finished disconnecting inactive speakers, {} secs", work_start_time.elapsed().as_secs_f64());
+    log::trace!(
+        "Finished disconnecting inactive speakers, {} secs",
+        work_start_time.elapsed().as_secs_f64()
+    );
 }
 
 pub async fn cleanup_loop(frontend: Arc<Frontend>, cache: Arc<serenity::cache::Cache>) -> ! {
-    let mut interval = tokio::time::interval(Duration::from_secs(frontend.config.disconnect_check_interval_secs));
+    let mut interval = tokio::time::interval(Duration::from_secs(
+        frontend.config.disconnect_check_interval_secs,
+    ));
     loop {
         interval.tick().await;
         tokio::task::spawn(check_cleanup(frontend.clone(), cache.clone()));

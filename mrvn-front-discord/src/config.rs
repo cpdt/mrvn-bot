@@ -1,7 +1,7 @@
+use mrvn_back_ytdl::PlayConfig;
+use serde::de::Error;
 use serde::Deserialize;
 use std::collections::HashMap;
-use serde::de::Error;
-use mrvn_back_ytdl::PlayConfig;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandBot {
@@ -80,14 +80,16 @@ impl Config {
             static ref SUBSTITUTE_REGEX: regex::Regex = regex::Regex::new(r"\{(\w+)\}").unwrap();
         }
 
-        SUBSTITUTE_REGEX.replace_all(message_template, |caps: &regex::Captures| {
-            let substitute_name = &caps[1];
-            substitutions
-                .iter()
-                .find(|(key, _)| *key == substitute_name)
-                .map(|(_, value)| *value)
-                .unwrap_or("")
-        }).into_owned()
+        SUBSTITUTE_REGEX
+            .replace_all(message_template, |caps: &regex::Captures| {
+                let substitute_name = &caps[1];
+                substitutions
+                    .iter()
+                    .find(|(key, _)| *key == substitute_name)
+                    .map(|(_, value)| *value)
+                    .unwrap_or("")
+            })
+            .into_owned()
     }
 
     pub fn get_play_config(&self) -> PlayConfig {
@@ -102,7 +104,10 @@ impl Config {
     }
 }
 
-fn from_hex<'de, D>(deserializer: D) -> Result<u32, D::Error> where D: serde::Deserializer<'de> {
+fn from_hex<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
     let s: String = Deserialize::deserialize(deserializer)?;
     u32::from_str_radix(&s, 16).map_err(D::Error::custom)
 }

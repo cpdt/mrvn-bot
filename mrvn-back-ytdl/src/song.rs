@@ -1,14 +1,14 @@
 use crate::Error;
+use futures::future::{AbortHandle, Abortable};
 use serenity::model::prelude::UserId;
-use tokio::process::Command as TokioCommand;
-use tokio::io::{BufReader, AsyncBufReadExt, AsyncWriteExt};
-use std::process::{Stdio, Command, Child};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use futures::future::{AbortHandle, Abortable};
 use std::io::SeekFrom;
+use std::process::{Child, Command, Stdio};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command as TokioCommand;
 
-const DEFAULT_FFMPEG_ARGS: &'static [&'static str] = &[
+const DEFAULT_FFMPEG_ARGS: &[&str] = &[
     "-vn",
     "-f",
     "s16le",
@@ -18,7 +18,7 @@ const DEFAULT_FFMPEG_ARGS: &'static [&'static str] = &[
     "48000",
     "-acodec",
     "pcm_f32le",
-    "-"
+    "-",
 ];
 
 pub struct Song {
@@ -49,7 +49,7 @@ fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
         return Err(Error::UnsupportedUrl);
     }
 
-    let value: YtdlOutput = serde_json::from_str(&line).map_err(Error::Parse)?;
+    let value: YtdlOutput = serde_json::from_str(line).map_err(Error::Parse)?;
 
     Ok(Song {
         metadata: SongMetadata {
@@ -58,20 +58,29 @@ fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
             user_id,
         },
         download_url: value.url.to_string(),
-        http_headers: value.http_headers
+        http_headers: value
+            .http_headers
             .iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect()
+            .collect(),
     })
 }
 
 impl Song {
-    pub async fn load(term: &str, user_id: UserId, config: &PlayConfig<'_>) -> Result<Vec<Song>, Error> {
+    pub async fn load(
+        term: &str,
+        user_id: UserId,
+        config: &PlayConfig<'_>,
+    ) -> Result<Vec<Song>, Error> {
         let ytdl_url = match url::Url::parse(term) {
             Ok(url) => {
                 if let Some(host_str) = url.host_str() {
                     // Ensure the resolved host isn't in the blocklist
-                    if config.host_blocklist.iter().any(|domain| host_str.contains(domain)) {
+                    if config
+                        .host_blocklist
+                        .iter()
+                        .any(|domain| host_str.contains(domain))
+                    {
                         return Err(Error::UnsupportedUrl);
                     }
                 }
@@ -89,7 +98,7 @@ impl Song {
                 "--no-warnings",
                 ytdl_url.as_ref(),
                 "-o",
-                "-"
+                "-",
             ])
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
@@ -100,13 +109,17 @@ impl Song {
 
         let mut songs = Vec::new();
         while let Some(line) = lines.next_line().await.map_err(Error::Io)? {
-            songs.push(parse_ytdl_line(&line , user_id)?);
+            songs.push(parse_ytdl_line(&line, user_id)?);
         }
 
         Ok(songs)
     }
 
-    pub async fn fetch_one(webpage_url: &str, user_id: UserId, config: &PlayConfig<'_>) -> Result<Song, Error> {
+    pub async fn fetch_one(
+        webpage_url: &str,
+        user_id: UserId,
+        config: &PlayConfig<'_>,
+    ) -> Result<Song, Error> {
         let mut ytdl = TokioCommand::new(config.ytdl_name)
             .args(config.ytdl_args)
             .args(&[
@@ -116,7 +129,7 @@ impl Song {
                 "--no-playlist",
                 webpage_url,
                 "-o",
-                "-"
+                "-",
             ])
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
@@ -133,35 +146,42 @@ impl Song {
         parse_ytdl_line(&first_line, user_id)
     }
 
-    pub async fn get_input(&self, config: &PlayConfig<'_>) -> Result<songbird::input::Input, Error> {
+    pub async fn get_input(
+        &self,
+        config: &PlayConfig<'_>,
+    ) -> Result<songbird::input::Input, Error> {
         // The cached download URL might have become invalid since fetching it. We assume it's fine
         // but fetch a new one from youtube-dl if playback fails.
         match self.get_input_no_retry(config).await {
             Ok(input) => Ok(input),
             Err(why) => {
-                log::error!("Error opening stream to play {}: {}", &self.metadata.url, why);
-                let refetch_song = Song::fetch_one(&self.metadata.url, self.metadata.user_id, config).await?;
+                log::error!(
+                    "Error opening stream to play {}: {}",
+                    &self.metadata.url,
+                    why
+                );
+                let refetch_song =
+                    Song::fetch_one(&self.metadata.url, self.metadata.user_id, config).await?;
                 refetch_song.get_input_no_retry(config).await
             }
         }
     }
 
-    async fn get_input_no_retry(&self, config: &PlayConfig<'_>) -> Result<songbird::input::Input, Error> {
+    async fn get_input_no_retry(
+        &self,
+        config: &PlayConfig<'_>,
+    ) -> Result<songbird::input::Input, Error> {
         // If this is a livestream, directly call FFMPEG instead of doing the download step ourself
         if self.download_url.ends_with(".m3u8") {
-            let http_headers: String = self.http_headers
+            let http_headers: String = self
+                .http_headers
                 .iter()
                 .map(|(key, value)| format!("{}: {}\r\n", key, value))
                 .collect();
 
             let ffmpeg = Command::new(config.ffmpeg_name)
                 .args(config.ffmpeg_args)
-                .args(&[
-                    "-headers",
-                    &http_headers,
-                    "-i",
-                    &self.download_url,
-                ])
+                .args(&["-headers", &http_headers, "-i", &self.download_url])
                 .args(DEFAULT_FFMPEG_ARGS)
                 .stdin(Stdio::null())
                 .stderr(Stdio::null())
@@ -180,16 +200,17 @@ impl Song {
         // Start streaming data from the remote
         let mut headers = reqwest::header::HeaderMap::new();
         for (key, value) in &self.http_headers {
-            headers.insert(reqwest::header::HeaderName::from_bytes(key.as_bytes()).unwrap(), value.parse().unwrap());
+            headers.insert(
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
         }
 
         lazy_static::lazy_static! {
             static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::builder().build().unwrap();
         }
 
-        let request_builder = HTTP_CLIENT
-            .get(&self.download_url)
-            .headers(headers);
+        let request_builder = HTTP_CLIENT.get(&self.download_url).headers(headers);
         let source = StreamingSource::new(config, request_builder).await?;
 
         Ok(songbird::input::Input::new(
@@ -217,7 +238,10 @@ struct StreamingSource {
 }
 
 impl StreamingSource {
-    pub async fn new(config: &PlayConfig<'_>, request_builder: reqwest::RequestBuilder) -> Result<Self, Error> {
+    pub async fn new(
+        config: &PlayConfig<'_>,
+        request_builder: reqwest::RequestBuilder,
+    ) -> Result<Self, Error> {
         let initial_response = request_builder
             .try_clone()
             .unwrap()
@@ -231,10 +255,7 @@ impl StreamingSource {
 
         let mut ffmpeg = Command::new(config.ffmpeg_name)
             .args(config.ffmpeg_args)
-            .args(&[
-                "-i",
-                "-",
-            ])
+            .args(&["-i", "-"])
             .args(DEFAULT_FFMPEG_ARGS)
             .stdin(Stdio::piped())
             .stderr(Stdio::null())
@@ -242,7 +263,8 @@ impl StreamingSource {
             .spawn()
             .map_err(Error::Io)?;
 
-        let mut ffmpeg_in = tokio::process::ChildStdin::from_std(ffmpeg.stdin.take().unwrap()).map_err(Error::Io)?;
+        let mut ffmpeg_in = tokio::process::ChildStdin::from_std(ffmpeg.stdin.take().unwrap())
+            .map_err(Error::Io)?;
 
         let stream_future = async move {
             // Keep trying to load data until we've loaded the max possible
@@ -266,7 +288,7 @@ impl StreamingSource {
                 //    get into an infinite request loop.
                 let content_length = match content_length {
                     Some(length) => length,
-                    None => break
+                    None => break,
                 };
                 if received_bytes >= content_length {
                     break;
@@ -277,7 +299,10 @@ impl StreamingSource {
                 response = request_builder
                     .try_clone()
                     .unwrap()
-                    .header(reqwest::header::RANGE, format!("bytes={}-{}", received_bytes, content_length))
+                    .header(
+                        reqwest::header::RANGE,
+                        format!("bytes={}-{}", received_bytes, content_length),
+                    )
                     .send()
                     .await
                     .and_then(reqwest::Response::error_for_status)
@@ -286,11 +311,14 @@ impl StreamingSource {
 
             Result::<(), Error>::Ok(())
         };
-        tokio::spawn(Abortable::new(async move {
-            if let Err(why) = stream_future.await {
-                log::error!("Error while streaming data: {}", why);
-            }
-        }, abort_registration));
+        tokio::spawn(Abortable::new(
+            async move {
+                if let Err(why) = stream_future.await {
+                    log::error!("Error while streaming data: {}", why);
+                }
+            },
+            abort_registration,
+        ));
 
         let ffmpeg_out = ffmpeg.stdout.take().unwrap();
         Ok(StreamingSource {
@@ -333,7 +361,10 @@ impl std::io::Seek for StreamingSource {
     }
 }
 
-async fn pipe_chunk(mut chunk: &[u8], stream: &mut tokio::process::ChildStdin) -> std::io::Result<u64> {
+async fn pipe_chunk(
+    mut chunk: &[u8],
+    stream: &mut tokio::process::ChildStdin,
+) -> std::io::Result<u64> {
     let mut total_written_bytes = 0;
     while !chunk.is_empty() {
         let written_bytes = stream.write(chunk).await?;
@@ -349,7 +380,10 @@ async fn pipe_chunk(mut chunk: &[u8], stream: &mut tokio::process::ChildStdin) -
     Ok(total_written_bytes)
 }
 
-async fn pipe_response(response: &mut reqwest::Response, stream: &mut tokio::process::ChildStdin) -> std::io::Result<u64> {
+async fn pipe_response(
+    response: &mut reqwest::Response,
+    stream: &mut tokio::process::ChildStdin,
+) -> std::io::Result<u64> {
     let mut total_received_bytes = 0;
     loop {
         let chunk = match response.chunk().await {
