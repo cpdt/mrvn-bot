@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# Reformat Rust files that are being committed
+rust_files=$(git diff --cached --name-only --diff-filter=d | grep '.rs$' | tr '\n' '\0')
+echo -n "$rust_files" | xargs -r0 rustfmt --config "skip_children=true,edition=2018"
+echo -n "$rust_files" | xargs -r0 git add
