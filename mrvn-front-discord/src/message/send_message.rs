@@ -53,22 +53,14 @@ pub async fn send_messages(
         if let (SendMessageDestination::Interaction { interaction, is_edit }, Some(first_message)) = (destination, maybe_first_message) {
             if is_edit {
                 interaction.edit_original_interaction_response(&ctx.http, |response| {
-                    response.create_embed(|embed| {
-                        embed
-                            .description(first_message.to_string(config))
-                            .color(config.embed_color)
-                    })
+                    response.create_embed(|embed| first_message.create_embed(embed, config))
                 }).await.map_err(crate::error::Error::Serenity)?;
             } else {
                 interaction.create_interaction_response(&ctx.http, |response| {
                     response
                         .kind(InteractionResponseType::ChannelMessageWithSource)
                         .interaction_response_data(|data| {
-                            data.create_embed(|embed| {
-                                embed
-                                    .description(first_message.to_string(config))
-                                    .color(config.embed_color)
-                            })
+                            data.create_embed(|embed| first_message.create_embed(embed, config))
                         })
                 }).await.map_err(crate::error::Error::Serenity)?;
             }
@@ -80,11 +72,7 @@ pub async fn send_messages(
     // action message, keep track of its ID so we can record it later.
     let remaining_messages_future = future::try_join_all(messages_iter.map(|message| async move {
         let channel_message = message_channel_id.send_message(&ctx.http, |create_message| {
-            create_message.embed(|embed| {
-                embed
-                    .description(message.to_string(config))
-                    .color(config.embed_color)
-            })
+            create_message.embed(|embed| message.create_embed(embed, config))
         }).await.map_err(crate::error::Error::Serenity)?;
 
         if message.is_action() {

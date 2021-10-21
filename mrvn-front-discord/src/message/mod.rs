@@ -18,10 +18,10 @@ impl Message {
         }
     }
 
-    pub fn to_string(&self, config: &crate::config::Config) -> String {
+    pub fn create_embed<'e>(&self, embed: &'e mut serenity::builder::CreateEmbed, config: &crate::config::Config) -> &'e mut serenity::builder::CreateEmbed {
         match self {
-            Message::Action(action) => action.to_string(config),
-            Message::Response(response) => response.to_string(config),
+            Message::Action(action) => action.create_embed(embed, config),
+            Message::Response(response) => response.create_embed(embed, config),
         }
     }
 }
@@ -109,6 +109,9 @@ pub enum ResponseMessage {
         voice_channel_id: ChannelId,
         count: usize,
     },
+    ImageEmbed {
+        image_url: String,
+    },
     NoMatchingSongsError,
     NotInVoiceChannelError,
     UnsupportedSiteError,
@@ -128,7 +131,7 @@ pub enum ResponseMessage {
     },
     AlreadyPlayingError {
         voice_channel_id: ChannelId,
-    }
+    },
 }
 
 impl ActionMessage {
@@ -166,6 +169,26 @@ impl ActionMessage {
             },
             ActionMessage::UnknownError => config.get_raw_message("action.unknown_error").to_string(),
         }
+    }
+
+    pub fn is_error(&self) -> bool {
+        match self {
+            ActionMessage::Playing { .. }
+            | ActionMessage::PlayingResponse { .. }
+            | ActionMessage::Finished { .. } => false,
+            ActionMessage::NoSpeakersError { .. }
+            | ActionMessage::UnknownError => true,
+        }
+    }
+
+    pub fn create_embed<'e>(&self, embed: &'e mut serenity::builder::CreateEmbed, config: &crate::config::Config) -> &'e mut serenity::builder::CreateEmbed {
+        embed
+            .description(self.to_string(config))
+            .color(if self.is_error() {
+                config.error_embed_color
+            } else {
+                config.action_embed_color
+            })
     }
 }
 
@@ -317,6 +340,44 @@ impl ResponseMessage {
                     ("voice_channel_id", &channel_id_string),
                 ])
             }
+            ResponseMessage::ImageEmbed { image_url } => image_url.clone(),
+        }
+    }
+
+    pub fn is_error(&self) -> bool {
+        match self {
+            ResponseMessage::Queued { .. }
+            | ResponseMessage::QueuedMultiple { .. }
+            | ResponseMessage::QueuedNoSpeakers { .. }
+            | ResponseMessage::QueuedMultipleNoSpeakers { .. }
+            | ResponseMessage::Replaced { .. }
+            | ResponseMessage::ReplaceSkipped { .. }
+            | ResponseMessage::Paused { .. }
+            | ResponseMessage::Skipped { .. }
+            | ResponseMessage::SkipMoreVotesNeeded { .. }
+            | ResponseMessage::Stopped { .. }
+            | ResponseMessage::StopMoreVotesNeeded { .. }
+            | ResponseMessage::ImageEmbed { .. } => false,
+            ResponseMessage::NoMatchingSongsError
+            | ResponseMessage::NotInVoiceChannelError
+            | ResponseMessage::UnsupportedSiteError
+            | ResponseMessage::SkipAlreadyVotedError { .. }
+            | ResponseMessage::StopAlreadyVotedError { .. }
+            | ResponseMessage::NothingIsQueuedError { .. }
+            | ResponseMessage::NothingIsPlayingError { .. }
+            | ResponseMessage::AlreadyPlayingError { .. } => true,
+        }
+    }
+
+    pub fn create_embed<'e>(&self, embed: &'e mut serenity::builder::CreateEmbed, config: &crate::config::Config) -> &'e mut serenity::builder::CreateEmbed {
+        embed.color(if self.is_error() {
+            config.error_embed_color
+        } else {
+            config.response_embed_color
+        });
+        match self {
+            ResponseMessage::ImageEmbed { image_url } => embed.image(image_url),
+            _ => embed.description(self.to_string(config)),
         }
     }
 }

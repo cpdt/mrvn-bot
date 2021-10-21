@@ -56,7 +56,7 @@ impl Frontend {
                             data.create_embed(|embed| {
                                 embed
                                     .description(self.config.get_raw_message("action.unknown_error"))
-                                    .color(self.config.embed_color)
+                                    .color(self.config.response_embed_color)
                             })
                         })
                 }).await.map(|_| ())
@@ -67,7 +67,7 @@ impl Frontend {
                     response.create_embed(|embed| {
                         embed
                             .description(self.config.get_raw_message("action.unknown_error"))
-                            .color(self.config.embed_color)
+                            .color(self.config.response_embed_color)
                     })
                 }).await.map(|_| ())
             }
@@ -189,7 +189,12 @@ impl Frontend {
                 log::debug!("Received stop");
                 self.handle_stop_command(ctx, user_id, guild_id, guild_model).await
             }
-            command_name => Err(crate::error::Error::UnknownCommand(command_name.to_string())),
+            command_name => {
+                match self.config.greets.as_ref().and_then(|greets| greets.get(command_name)) {
+                    Some(greet) => Ok(vec![Message::Response(ResponseMessage::ImageEmbed { image_url: greet.image_url.clone() })]),
+                    None => Err(crate::error::Error::UnknownCommand(command_name.to_string())),
+                }
+            }
         }
     }
 

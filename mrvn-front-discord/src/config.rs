@@ -29,9 +29,20 @@ pub struct FfmpegConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Greet {
+    pub description: String,
+    pub image_url: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     #[serde(deserialize_with = "from_hex")]
-    pub embed_color: u32,
+    pub action_embed_color: u32,
+    #[serde(deserialize_with = "from_hex")]
+    pub response_embed_color: u32,
+    #[serde(deserialize_with = "from_hex")]
+    pub error_embed_color: u32,
+
     pub skip_votes_required: usize,
     pub stop_votes_required: usize,
 
@@ -47,6 +58,8 @@ pub struct Config {
     pub command_bot: CommandBot,
     pub voice_bots: Vec<VoiceBot>,
     pub messages: HashMap<String, String>,
+
+    pub greets: Option<HashMap<String, Greet>>,
 }
 
 impl Config {

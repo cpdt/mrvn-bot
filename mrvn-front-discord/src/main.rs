@@ -60,7 +60,8 @@ async fn main() {
         .expect("Unable to create command client");
     commands::register_commands(
         &command_client.cache_and_http.http,
-        config.command_bot.guild_id.map(GuildId)
+        config.command_bot.guild_id.map(GuildId),
+        &config,
     ).await.expect("Unable to register commands");
     log::info!("Finished registering application commands");
 

@@ -1,5 +1,7 @@
 {
-  "embed_color": "F7E38D",
+  "action_embed_color": "F7E38D",
+  "response_embed_color": "F7E38D",
+  "error_embed_color": "FF5750",
   "skip_votes_required": 2,
   "stop_votes_required": 2,
   "disconnect_min_inactive_secs": 600,

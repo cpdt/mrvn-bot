@@ -22,12 +22,6 @@ fn play_command(command: &mut serenity::builder::CreateApplicationCommand) -> &m
         })
 }
 
-//fn queue_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
-//    command
-//        .name("queue")
-//        .description("View and manage your queue.")
-//}
-
 fn replace_command(command: &mut serenity::builder::CreateApplicationCommand) -> &mut serenity::builder::CreateApplicationCommand {
     command
         .name("replace")
@@ -59,7 +53,7 @@ fn stop_command(command: &mut serenity::builder::CreateApplicationCommand) -> &m
         .description("Vote to skip the current song and stop playback.")
 }
 
-pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id: Option<GuildId>) -> serenity::Result<()> {
+pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id: Option<GuildId>, config: &crate::config::Config) -> serenity::Result<()> {
     let http_ref = http.as_ref();
     match guild_id {
         Some(guild_id) => {
@@ -67,12 +61,21 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
             log::trace!("Registering guild application commands");
             futures::try_join!(
                 guild_id.create_application_command(http_ref, play_command),
-                // guild_id.create_application_command(http_ref, queue_command),
                 guild_id.create_application_command(http_ref, replace_command),
                 guild_id.create_application_command(http_ref, pause_command),
                 guild_id.create_application_command(http_ref, skip_command),
                 guild_id.create_application_command(http_ref, stop_command),
             )?;
+
+            if let Some(greets) = &config.greets {
+                for (greet_command, greet) in greets {
+                    guild_id.create_application_command(http_ref, |command| {
+                        command
+                            .name(greet_command)
+                            .description(&greet.description)
+                    }).await?;
+                }
+            }
         },
         None => {
             log::trace!("Registering global application commands");
@@ -82,7 +85,19 @@ pub async fn register_commands(http: impl AsRef<serenity::http::Http>, guild_id:
                     .create_application_command(replace_command)
                     .create_application_command(pause_command)
                     .create_application_command(skip_command)
-                    .create_application_command(stop_command)
+                    .create_application_command(stop_command);
+
+                if let Some(greets) = &config.greets {
+                    for (greet_command, greet) in greets {
+                        commands.create_application_command(|command| {
+                            command
+                                .name(greet_command)
+                                .description(&greet.description)
+                        });
+                    }
+                }
+
+                commands
             }).await?;
         }
     };
