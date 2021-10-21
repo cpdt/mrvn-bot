@@ -19,7 +19,7 @@ jobs:
           override: true
 
       - name: Check
-        run: cargo fmt --check
+        run: cargo fmt -- --check
 
   check-clippy:
     name: Check Clippy
