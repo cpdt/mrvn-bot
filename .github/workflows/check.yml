@@ -1,6 +1,8 @@
 on:
-  - push
-  - pull_request
+  pull_request:
+  push:
+    branches:
+      - 'main'
 
 name: Check
 

@@ -18,7 +18,7 @@ jobs:
         run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/}
 
       - name: Create alias
-        run: docker tag ghcr.io/cpdt/mrvn-bot:${{ github.sha }} ghcr.io/cpdt/mrvn-bot:${{ tag_name.outputs.name }}
+        run: docker tag ghcr.io/cpdt/mrvn-bot:${{ github.sha }} ghcr.io/cpdt/mrvn-bot:${{ steps.tag_name.outputs.name }}
 
       - name: Push alias
-        run: docker push ghcr.io/cpdt/mrvn-bot:${{ tag_name.outputs.name }}
+        run: docker push ghcr.io/cpdt/mrvn-bot:${{ steps.tag_name.outputs.name }}
