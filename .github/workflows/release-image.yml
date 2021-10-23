@@ -17,6 +17,9 @@ jobs:
         id: tag_name
         run: echo ::set-output name=tag::${GITHUB_REF#refs/tags/}
 
+      - name: Pull image
+        run: docker pull ghcr.io/cpdt/mrvn-bot:${{ github.sha }}
+
       - name: Create alias
         run: docker tag ghcr.io/cpdt/mrvn-bot:${{ github.sha }} ghcr.io/cpdt/mrvn-bot:${{ steps.tag_name.outputs.tag }}
 
