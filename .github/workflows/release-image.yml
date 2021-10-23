@@ -13,6 +13,9 @@ jobs:
       - name: Log in to registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Checkout
+        uses: actions/checkout@v2
+
       - name: Get tag
         id: tag_name
         run: echo "::set-output name=tag::$(git describe --tags --abbrev=0)"
