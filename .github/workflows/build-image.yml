@@ -18,7 +18,13 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Build image
-        run: docker build . --tag ghcr.io/cpdt/mrvn-bot:latest
+        run: docker build . --tag ghcr.io/cpdt/mrvn-bot:${{ github.sha }}
 
       - name: Push image
+        run: docker push ghcr.io/cpdt/mrvn-bot:${{ github.sha }}
+
+      - name: Alias latest
+        run: docker tag ghcr.io/cpdt/mrvn-bot:${{ github.sha }} ghcr.io/cpdt/mrvn-bot:latest
+
+      - name: Push alias
         run: docker push ghcr.io/cpdt/mrvn-bot:latest
