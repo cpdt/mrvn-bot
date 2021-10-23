@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "mrvn-back-ytdl"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "dashmap",
  "futures",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "mrvn-front-discord"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "dotenv",
  "futures",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "mrvn-model"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "dashmap",
  "serenity",
