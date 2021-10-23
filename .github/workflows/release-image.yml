@@ -13,15 +13,12 @@ jobs:
       - name: Log in to registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Checkout
-        uses: actions/checkout@v2
-
       - name: Get tag
         id: tag_name
-        run: echo "::set-output name=tag::$(git describe --tags --abbrev=0)"
+        run: echo ::set-output name=tag::${GITHUB_REF#refs/tags/}
 
       - name: Create alias
-        run: docker tag ghcr.io/cpdt/mrvn-bot:${{ github.sha }} ghcr.io/cpdt/mrvn-bot:${{ steps.tag_name.outputs.name }}
+        run: docker tag ghcr.io/cpdt/mrvn-bot:${{ github.sha }} ghcr.io/cpdt/mrvn-bot:${{ steps.tag_name.outputs.tag }}
 
       - name: Push alias
-        run: docker push ghcr.io/cpdt/mrvn-bot:${{ steps.tag_name.outputs.name }}
+        run: docker push ghcr.io/cpdt/mrvn-bot:${{ steps.tag_name.outputs.tag }}
