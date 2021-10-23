@@ -1,5 +1,6 @@
 on:
-  push:
+  - push
+  - pull_request
 
 name: Check
 
