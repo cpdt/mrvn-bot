@@ -5,7 +5,7 @@ COPY . .
 RUN cargo install --path ./mrvn-front-discord
 
 FROM bitnami/minideb:buster
-RUN apt-get update && apt-get install -y ca-certificates libopus0 libopus-dev ffmpeg python3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libopus0 libopus-dev ffmpeg python && rm -rf /var/lib/apt/lists/*
 RUN update-ca-certificates
 COPY --from=builder /usr/local/bin/youtube-dl /usr/local/bin/youtube-dl
 COPY --from=builder /usr/local/cargo/bin/mrvn-front-discord /usr/local/bin/mrvn-front-discord
