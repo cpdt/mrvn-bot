@@ -1,6 +1,5 @@
 use crate::Error;
 use futures::future::{AbortHandle, Abortable};
-use log::debug;
 use serenity::model::prelude::UserId;
 use std::borrow::Cow;
 use std::collections::HashMap;
