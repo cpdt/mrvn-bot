@@ -1,5 +1,5 @@
 FROM rust:buster as builder
-RUN curl -L https://yt-dl.org/downloads/2021.06.06/youtube-dl -o /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl
+RUN curl -L https://yt-dl.org/downloads/2021.12.17/youtube-dl -o /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl
 WORKDIR /usr/src/mrvn-bot
 COPY . .
 RUN cargo install --path ./mrvn-front-discord
