@@ -1,5 +1,6 @@
 use crate::Error;
 use futures::future::{AbortHandle, Abortable};
+use log::debug;
 use serenity::model::prelude::UserId;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -172,7 +173,9 @@ impl Song {
         config: &PlayConfig<'_>,
     ) -> Result<songbird::input::Input, Error> {
         // If this is a livestream, directly call FFMPEG instead of doing the download step ourself
-        if self.download_url.ends_with(".m3u8") {
+        let parsed_download_url =
+            url::Url::parse(&self.download_url).map_err(|_| Error::UnsupportedUrl)?;
+        if parsed_download_url.path().ends_with(".m3u8") {
             let http_headers: String = self
                 .http_headers
                 .iter()
