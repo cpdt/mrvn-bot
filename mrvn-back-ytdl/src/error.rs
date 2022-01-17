@@ -2,7 +2,7 @@
 pub enum Error {
     Io(std::io::Error),
     Runtime(tokio::task::JoinError),
-    Parse(serde_json::Error),
+    Parse(serde_json::Error, String),
     Http(reqwest::Error),
     SongbirdJoin(songbird::error::JoinError),
     SongbirdTrack(songbird::error::TrackError),
@@ -15,7 +15,7 @@ impl std::fmt::Display for Error {
         match self {
             Error::Io(err) => err.fmt(f),
             Error::Runtime(err) => err.fmt(f),
-            Error::Parse(err) => err.fmt(f),
+            Error::Parse(err, value) => write!(f, "{}: {}", err, value),
             Error::Http(err) => err.fmt(f),
             Error::SongbirdJoin(err) => err.fmt(f),
             Error::SongbirdTrack(err) => err.fmt(f),

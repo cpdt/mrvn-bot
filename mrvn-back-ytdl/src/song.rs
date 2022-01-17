@@ -45,11 +45,13 @@ struct YtdlOutput {
 }
 
 fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
-    if line.starts_with("ERROR:") {
+    let trimmed_line = line.trim();
+    if trimmed_line.starts_with("ERROR:") {
         return Err(Error::UnsupportedUrl);
     }
 
-    let value: YtdlOutput = serde_json::from_str(line).map_err(Error::Parse)?;
+    let value: YtdlOutput = serde_json::from_str(trimmed_line)
+        .map_err(|err| Error::Parse(err, trimmed_line.to_string()))?;
 
     Ok(Song {
         metadata: SongMetadata {
