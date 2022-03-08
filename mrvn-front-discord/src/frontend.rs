@@ -177,7 +177,7 @@ impl Frontend {
         let user_id = command.user.id;
         match command.data.name.as_str() {
             "play" => {
-                let maybe_term = match command
+                let term = match command
                     .data
                     .options
                     .get(0)
@@ -187,22 +187,18 @@ impl Frontend {
                         application_command::ApplicationCommandInteractionDataOptionValue::String(
                             val,
                         ),
-                    ) => Some(val.clone()),
-                    _ => None,
+                    ) => val.clone(),
+                    _ => "".to_string(),
                 };
 
-                match maybe_term {
-                    Some(term) => {
-                        log::debug!("Received play, interpreted as queue-play \"{}\"", term);
-                        self.handle_queue_play_command(ctx, user_id, guild_id, guild_model, &term)
-                            .await
-                    }
-                    None => {
-                        log::debug!("Received play, interpreted as unpause");
-                        self.handle_unpause_command(ctx, user_id, guild_id, guild_model)
-                            .await
-                    }
-                }
+                log::debug!("Received play \"{}\"", term);
+                self.handle_queue_play_command(ctx, user_id, guild_id, guild_model, &term)
+                    .await
+            }
+            "resume" => {
+                log::debug!("Received resume");
+                self.handle_unpause_command(ctx, user_id, guild_id, guild_model)
+                    .await
             }
             "replace" => {
                 let term = match command

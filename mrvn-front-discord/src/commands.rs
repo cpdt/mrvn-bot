@@ -27,8 +27,13 @@ fn play_command(
                 .name("term")
                 .description("A search term or song link.")
                 .kind(application_command::ApplicationCommandOptionType::String)
-                .required(false)
         })
+}
+
+fn resume_command(
+    command: &mut serenity::builder::CreateApplicationCommand,
+) -> &mut serenity::builder::CreateApplicationCommand {
+    command.name("resume").description("Resume a paused song.")
 }
 
 fn replace_command(
@@ -94,6 +99,7 @@ pub async fn register_commands(
             log::trace!("Registering guild application commands");
             futures::try_join!(
                 guild_id.create_application_command(http_ref, play_command),
+                guild_id.create_application_command(http_ref, resume_command),
                 guild_id.create_application_command(http_ref, replace_command),
                 guild_id.create_application_command(http_ref, pause_command),
                 guild_id.create_application_command(http_ref, skip_command),
@@ -114,6 +120,7 @@ pub async fn register_commands(
                 |commands| {
                     commands
                         .create_application_command(play_command)
+                        .create_application_command(resume_command)
                         .create_application_command(replace_command)
                         .create_application_command(pause_command)
                         .create_application_command(skip_command)
