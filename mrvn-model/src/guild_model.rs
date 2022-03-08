@@ -181,8 +181,12 @@ impl<QueueEntry> GuildModel<QueueEntry> {
 
                 if now_day == last_day {
                     SecretStreakStatus::Wait
-                } else {
+                } else if now_day == last_day.succ() {
                     streak.streak_days += 1;
+                    streak.last_time = now_time;
+                    SecretStreakStatus::Success
+                } else {
+                    streak.streak_days = 1;
                     streak.last_time = now_time;
                     SecretStreakStatus::Success
                 }
@@ -198,10 +202,27 @@ impl<QueueEntry> GuildModel<QueueEntry> {
     }
 
     pub fn secret_get_streak(&self, user_id: UserId) -> u64 {
-        self.secret_streaks
-            .get(&user_id)
-            .map(|streak| streak.streak_days)
-            .unwrap_or(0)
+        match self.secret_streaks.get(&user_id) {
+            Some(streak) => {
+                let now_time = Utc::today();
+
+                let last_day = self
+                    .config
+                    .secret_highfive_timezone
+                    .from_utc_date(&streak.last_time.naive_utc());
+                let now_day = self
+                    .config
+                    .secret_highfive_timezone
+                    .from_utc_date(&now_time.naive_utc());
+
+                if last_day < now_day.pred() {
+                    0
+                } else {
+                    streak.streak_days
+                }
+            }
+            None => 0,
+        }
     }
 
     // Events:
