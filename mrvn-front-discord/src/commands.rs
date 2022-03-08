@@ -27,6 +27,7 @@ fn play_command(
                 .name("term")
                 .description("A search term or song link.")
                 .kind(application_command::ApplicationCommandOptionType::String)
+                .required(true)
         })
 }
 
