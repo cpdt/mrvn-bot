@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
+chrono-tz = "0.6"
 mrvn-model = { path = "../mrvn-model" }
 mrvn-back-ytdl = { path = "../mrvn-back-ytdl" }
 dotenv = "0.15"

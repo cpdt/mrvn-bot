@@ -29,9 +29,9 @@ pub struct FfmpegConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct Greet {
-    pub description: String,
+pub struct SecretHighfive {
     pub image_url: String,
+    pub timezone: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -59,7 +59,7 @@ pub struct Config {
     pub voice_bots: Vec<VoiceBot>,
     pub messages: HashMap<String, String>,
 
-    pub greets: Option<HashMap<String, Greet>>,
+    pub secret_highfive: Option<SecretHighfive>,
 }
 
 impl Config {

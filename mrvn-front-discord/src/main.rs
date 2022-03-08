@@ -37,6 +37,11 @@ async fn main() {
     let model = mrvn_model::AppModel::new(mrvn_model::AppModelConfig {
         skip_votes_required: config.skip_votes_required,
         stop_votes_required: config.stop_votes_required,
+
+        secret_highfive_timezone: match &config.secret_highfive {
+            Some(secret) => secret.timezone.parse().expect("Unable to parse timezone"),
+            None => chrono_tz::Etc::UTC,
+        },
     });
 
     log::info!("Starting {} voice clients", config.voice_bots.len());

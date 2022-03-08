@@ -68,6 +68,20 @@ fn stop_command(
         .description("Vote to skip the current song and stop playback.")
 }
 
+fn secret_highfive_command(
+    command: &mut serenity::builder::CreateApplicationCommand,
+) -> &mut serenity::builder::CreateApplicationCommand {
+    command.name("highfive").description("\\^_^")
+}
+
+fn secret_streak_command(
+    command: &mut serenity::builder::CreateApplicationCommand,
+) -> &mut serenity::builder::CreateApplicationCommand {
+    command
+        .name("streak")
+        .description("View your high-five streak")
+}
+
 pub async fn register_commands(
     http: impl AsRef<serenity::http::Http>,
     guild_id: Option<GuildId>,
@@ -86,14 +100,11 @@ pub async fn register_commands(
                 guild_id.create_application_command(http_ref, stop_command),
             )?;
 
-            if let Some(greets) = &config.greets {
-                for (greet_command, greet) in greets {
-                    guild_id
-                        .create_application_command(http_ref, |command| {
-                            command.name(greet_command).description(&greet.description)
-                        })
-                        .await?;
-                }
+            if config.secret_highfive.is_some() {
+                futures::try_join!(
+                    guild_id.create_application_command(http_ref, secret_highfive_command),
+                    guild_id.create_application_command(http_ref, secret_streak_command),
+                )?;
             }
         }
         None => {
@@ -108,12 +119,10 @@ pub async fn register_commands(
                         .create_application_command(skip_command)
                         .create_application_command(stop_command);
 
-                    if let Some(greets) = &config.greets {
-                        for (greet_command, greet) in greets {
-                            commands.create_application_command(|command| {
-                                command.name(greet_command).description(&greet.description)
-                            });
-                        }
+                    if config.secret_highfive.is_some() {
+                        commands
+                            .create_application_command(secret_highfive_command)
+                            .create_application_command(secret_streak_command);
                     }
 
                     commands

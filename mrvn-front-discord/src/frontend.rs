@@ -7,7 +7,9 @@ use futures::prelude::*;
 use mrvn_back_ytdl::{
     Brain, EndedHandler, GuildSpeakerEndedHandle, GuildSpeakerEndedRef, GuildSpeakerRef, Song,
 };
-use mrvn_model::{AppModel, GuildModel, NextEntry, ReplaceStatus, VoteStatus, VoteType};
+use mrvn_model::{
+    AppModel, GuildModel, NextEntry, ReplaceStatus, SecretStreakStatus, VoteStatus, VoteType,
+};
 use serenity::model::id::ChannelId;
 use serenity::{
     model::prelude::{application_command, interactions, GuildId, UserId},
@@ -235,21 +237,37 @@ impl Frontend {
                 self.handle_stop_command(ctx, user_id, guild_id, guild_model)
                     .await
             }
-            command_name => {
-                match self
-                    .config
-                    .greets
-                    .as_ref()
-                    .and_then(|greets| greets.get(command_name))
-                {
-                    Some(greet) => Ok(vec![Message::Response(ResponseMessage::ImageEmbed {
-                        image_url: greet.image_url.clone(),
-                    })]),
-                    None => Err(crate::error::Error::UnknownCommand(
-                        command_name.to_string(),
-                    )),
+            "highfive" => {
+                log::debug!("Received highfive");
+                match guild_model.secret_add_streak(user_id) {
+                    SecretStreakStatus::Success => {
+                        Ok(vec![Message::Response(ResponseMessage::ImageEmbed {
+                            image_url: self
+                                .config
+                                .secret_highfive
+                                .as_ref()
+                                .ok_or(crate::error::Error::UnknownCommand("highfive".to_string()))?
+                                .image_url
+                                .clone(),
+                        })])
+                    }
+                    SecretStreakStatus::Wait => {
+                        Ok(vec![Message::Response(ResponseMessage::StreakWait)])
+                    }
                 }
             }
+            "streak" => {
+                log::debug!("Received streak");
+                match guild_model.secret_get_streak(user_id) {
+                    0 => Ok(vec![Message::Response(ResponseMessage::NoStreak)]),
+                    streak_length => Ok(vec![Message::Response(ResponseMessage::Streak {
+                        streak_length,
+                    })]),
+                }
+            }
+            command_name => Err(crate::error::Error::UnknownCommand(
+                command_name.to_string(),
+            )),
         }
     }
 

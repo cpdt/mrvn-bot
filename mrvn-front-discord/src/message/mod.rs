@@ -136,6 +136,12 @@ pub enum ResponseMessage {
     AlreadyPlayingError {
         voice_channel_id: ChannelId,
     },
+
+    StreakWait,
+    Streak {
+        streak_length: u64,
+    },
+    NoStreak,
 }
 
 impl ActionMessage {
@@ -436,6 +442,18 @@ impl ResponseMessage {
                 )
             }
             ResponseMessage::ImageEmbed { image_url } => image_url.clone(),
+
+            ResponseMessage::StreakWait => {
+                config.get_raw_message("response.streak_wait").to_string()
+            }
+            ResponseMessage::Streak { streak_length } => {
+                let streak_length_string = streak_length.to_string();
+                config.get_message(
+                    "response.streak",
+                    &[("streak_length", &streak_length_string)],
+                )
+            }
+            ResponseMessage::NoStreak => config.get_raw_message("response.no_streak").to_string(),
         }
     }
 
@@ -452,7 +470,10 @@ impl ResponseMessage {
             | ResponseMessage::SkipMoreVotesNeeded { .. }
             | ResponseMessage::Stopped { .. }
             | ResponseMessage::StopMoreVotesNeeded { .. }
-            | ResponseMessage::ImageEmbed { .. } => false,
+            | ResponseMessage::ImageEmbed { .. }
+            | ResponseMessage::StreakWait
+            | ResponseMessage::Streak { .. }
+            | ResponseMessage::NoStreak => false,
             ResponseMessage::NoMatchingSongsError
             | ResponseMessage::NotInVoiceChannelError
             | ResponseMessage::UnsupportedSiteError

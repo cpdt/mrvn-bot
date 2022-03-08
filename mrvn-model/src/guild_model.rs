@@ -1,6 +1,8 @@
 use crate::{AppModelConfig, AppModelDelegate};
 use serenity::model::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::hash_map::Entry;
+use chrono::{Date, Utc, TimeZone};
 
 fn find_first_user_in_channel<'a, Entry: 'a, Delegate: AppModelDelegate>(
     mut queues: impl Iterator<Item = &'a Queue<Entry>>,
@@ -36,6 +38,11 @@ pub enum NextEntry<QueueEntry> {
     Entry(QueueEntry),
 }
 
+pub enum SecretStreakStatus {
+    Success,
+    Wait,
+}
+
 struct Queue<Entry> {
     user_id: UserId,
     entries: VecDeque<Entry>,
@@ -61,6 +68,11 @@ struct ChannelModel {
     playing: ChannelPlayingState,
 }
 
+struct SecretStreak {
+    last_time: Date<Utc>,
+    streak_days: u64,
+}
+
 #[derive(Clone, Copy)]
 pub struct GuildActionMessage {
     pub channel_id: ChannelId,
@@ -73,6 +85,8 @@ pub struct GuildModel<QueueEntry> {
     last_action_message: Option<GuildActionMessage>,
     queues: Vec<Queue<QueueEntry>>,
     channels: HashMap<ChannelId, ChannelModel>,
+
+    secret_streaks: HashMap<UserId, SecretStreak>,
 }
 
 impl<QueueEntry> GuildModel<QueueEntry> {
@@ -83,6 +97,8 @@ impl<QueueEntry> GuildModel<QueueEntry> {
             last_action_message: None,
             queues: Vec::new(),
             channels: HashMap::new(),
+
+            secret_streaks: HashMap::new(),
         }
     }
 
@@ -145,6 +161,40 @@ impl<QueueEntry> GuildModel<QueueEntry> {
                 ReplaceStatus::Queued
             }
         }
+    }
+
+    pub fn secret_add_streak(&mut self, user_id: UserId) -> SecretStreakStatus {
+        let now_time = Utc::today();
+
+        match self.secret_streaks.entry(user_id) {
+            Entry::Occupied(mut o) => {
+                let streak = o.get_mut();
+
+                let last_day = self.config.secret_highfive_timezone.from_utc_date(&streak.last_time.naive_utc());
+                let now_day = self.config.secret_highfive_timezone.from_utc_date(&now_time.naive_utc());
+
+                if now_day == last_day {
+                    SecretStreakStatus::Wait
+                } else {
+                    streak.streak_days += 1;
+                    streak.last_time = now_time;
+                    SecretStreakStatus::Success
+                }
+            }
+            Entry::Vacant(v) => {
+                v.insert(SecretStreak {
+                    last_time: now_time,
+                    streak_days: 1,
+                });
+                SecretStreakStatus::Success
+            }
+        }
+    }
+
+    pub fn secret_get_streak(&self, user_id: UserId) -> u64 {
+        self.secret_streaks.get(&user_id)
+            .map(|streak| streak.streak_days)
+            .unwrap_or(0)
     }
 
     // Events:
