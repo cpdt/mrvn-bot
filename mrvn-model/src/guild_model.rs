@@ -1,8 +1,8 @@
 use crate::{AppModelConfig, AppModelDelegate};
+use chrono::{Date, TimeZone, Utc};
 use serenity::model::prelude::*;
-use std::collections::{HashMap, HashSet, VecDeque};
 use std::collections::hash_map::Entry;
-use chrono::{Date, Utc, TimeZone};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 fn find_first_user_in_channel<'a, Entry: 'a, Delegate: AppModelDelegate>(
     mut queues: impl Iterator<Item = &'a Queue<Entry>>,
@@ -170,8 +170,14 @@ impl<QueueEntry> GuildModel<QueueEntry> {
             Entry::Occupied(mut o) => {
                 let streak = o.get_mut();
 
-                let last_day = self.config.secret_highfive_timezone.from_utc_date(&streak.last_time.naive_utc());
-                let now_day = self.config.secret_highfive_timezone.from_utc_date(&now_time.naive_utc());
+                let last_day = self
+                    .config
+                    .secret_highfive_timezone
+                    .from_utc_date(&streak.last_time.naive_utc());
+                let now_day = self
+                    .config
+                    .secret_highfive_timezone
+                    .from_utc_date(&now_time.naive_utc());
 
                 if now_day == last_day {
                     SecretStreakStatus::Wait
@@ -192,7 +198,8 @@ impl<QueueEntry> GuildModel<QueueEntry> {
     }
 
     pub fn secret_get_streak(&self, user_id: UserId) -> u64 {
-        self.secret_streaks.get(&user_id)
+        self.secret_streaks
+            .get(&user_id)
             .map(|streak| streak.streak_days)
             .unwrap_or(0)
     }
