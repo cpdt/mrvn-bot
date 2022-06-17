@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 chrono = "0.4"
 chrono-tz = "0.6"
-dashmap = "4.0"
+dashmap = "5.3"
 
 [dependencies.serenity]
 version = "0.10"
@@ -16,5 +16,5 @@ default-features = false
 features = ["cache", "client", "gateway", "rustls_backend", "model", "unstable_discord_api", "voice"]
 
 [dependencies.tokio]
-version = "1.12"
+version = "1.19"
 features = ["macros", "rt-multi-thread"]
