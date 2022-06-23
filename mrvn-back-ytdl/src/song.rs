@@ -1,12 +1,15 @@
 use crate::Error;
+use async_stream::try_stream;
 use futures::future::{AbortHandle, Abortable};
+use futures::{pin_mut, TryStreamExt};
 use serenity::model::prelude::UserId;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::SeekFrom;
+use std::io::{ErrorKind, SeekFrom};
 use std::process::{Child, Command, Stdio};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 const DEFAULT_FFMPEG_ARGS: &[&str] = &[
     "-vn",
@@ -34,6 +37,7 @@ pub struct PlayConfig<'s> {
     pub ytdl_args: &'s [String],
     pub ffmpeg_name: &'s str,
     pub ffmpeg_args: &'s [String],
+    pub buffer_kb: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -246,6 +250,8 @@ impl StreamingSource {
         config: &PlayConfig<'_>,
         request_builder: reqwest::RequestBuilder,
     ) -> Result<Self, Error> {
+        let buffer_capacity_bytes = config.buffer_kb * 1024;
+
         let initial_response = request_builder
             .try_clone()
             .unwrap()
@@ -255,8 +261,8 @@ impl StreamingSource {
             .map_err(Error::Http)?;
 
         let content_length = initial_response.content_length();
-        let (abort_download, abort_registration) = AbortHandle::new_pair();
 
+        // Construct a writer for ffmpeg
         let mut ffmpeg = Command::new(config.ffmpeg_name)
             .args(config.ffmpeg_args)
             .args(&["-i", "-"])
@@ -270,54 +276,61 @@ impl StreamingSource {
         let mut ffmpeg_in = tokio::process::ChildStdin::from_std(ffmpeg.stdin.take().unwrap())
             .map_err(Error::Io)?;
 
-        let stream_future = async move {
-            // Keep trying to load data until we've loaded the max possible
-            let mut response = initial_response;
-            let mut received_bytes = 0;
-
-            loop {
-                // Pipe the data to FFMPEG
-                let received_this_request = pipe_response(&mut response, &mut ffmpeg_in)
-                    .await
-                    .map_err(Error::Io)?;
-                received_bytes += received_this_request;
-
-                // Some remotes close the request after a certain timeout. To avoid just ending
-                // playback when this happens, under certain circumstances we can restart the
-                // request with a Range header set.
-                // We only keep requesting if:
-                //  - The initial request had a Content-Length header set, so we know when to stop.
-                //  - We haven't received the amount of data we were meant to get.
-                //  - We did not receive an empty response in this request. This ensures we don't
-                //    get into an infinite request loop.
-                let content_length = match content_length {
-                    Some(length) => length,
-                    None => break,
-                };
-                if received_bytes >= content_length {
-                    break;
-                }
-                if received_this_request == 0 {
-                    break;
-                }
-                response = request_builder
-                    .try_clone()
-                    .unwrap()
-                    .header(
-                        reqwest::header::RANGE,
-                        format!("bytes={}-{}", received_bytes, content_length),
-                    )
-                    .send()
-                    .await
-                    .and_then(reqwest::Response::error_for_status)
-                    .map_err(Error::Http)?;
-            }
-
-            Result::<(), Error>::Ok(())
-        };
+        // Copy the incoming data to ffmpeg
+        let (abort_download, abort_registration) = AbortHandle::new_pair();
         tokio::spawn(Abortable::new(
             async move {
-                if let Err(why) = stream_future.await {
+                // Construct a reader from that request and any necessary continuing requests
+                let content_stream = try_stream! {
+                    let mut response = initial_response;
+                    let mut received_bytes = 0;
+
+                    loop {
+                        let mut received_this_request = 0;
+                        for await bytes_maybe in response.bytes_stream() {
+                            let bytes = bytes_maybe.map_err(|err| std::io::Error::new(ErrorKind::Other, err))?;
+                            received_this_request += bytes.len() as u64;
+
+                            yield bytes;
+                        }
+                        received_bytes += received_this_request;
+
+                        // Some remotes close the request after a certain timeout. To avoid just ending
+                        // playback when this happens, under certain circumstances we can restart the
+                        // request with a Range header set.
+                        // We only keep requesting if:
+                        //  - The initial request had a Content-Length header set, so we know when to stop.
+                        //  - We haven't received the amount of data we were meant to get.
+                        //  - We did not receive an empty response in this request. This ensures we don't
+                        //    get into an infinite request loop.
+                        let content_length = match content_length {
+                            Some(length) => length,
+                            None => break,
+                        };
+                        if received_bytes >= content_length || received_this_request == 0 {
+                            break;
+                        }
+
+                        response = request_builder
+                            .try_clone()
+                            .unwrap()
+                            .header(
+                                reqwest::header::RANGE,
+                                format!("bytes={}-{}", received_bytes, content_length),
+                            )
+                            .send()
+                            .await
+                            .and_then(reqwest::Response::error_for_status)
+                            .map_err(|err| std::io::Error::new(ErrorKind::Other, err))?;
+                    }
+                };
+                pin_mut!(content_stream);
+                let content_read = content_stream.into_async_read();
+                let content_read = content_read.compat();
+                let mut buffered_read =
+                    BufReader::with_capacity(buffer_capacity_bytes, content_read);
+
+                if let Err(why) = copy_buf(&mut buffered_read, &mut ffmpeg_in).await {
                     log::error!("Error while streaming data: {}", why);
                 }
             },
@@ -363,44 +376,4 @@ impl std::io::Seek for StreamingSource {
     fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
         panic!("Attempting to seek on non-seekable streaming source");
     }
-}
-
-async fn pipe_chunk(
-    mut chunk: &[u8],
-    stream: &mut tokio::process::ChildStdin,
-) -> std::io::Result<u64> {
-    let mut total_written_bytes = 0;
-    while !chunk.is_empty() {
-        let written_bytes = stream.write(chunk).await?;
-        total_written_bytes += written_bytes as u64;
-
-        if written_bytes == 0 {
-            log::warn!("Skipping {} bytes while streaming", chunk.len());
-            break;
-        }
-
-        chunk = &chunk[written_bytes..];
-    }
-    Ok(total_written_bytes)
-}
-
-async fn pipe_response(
-    response: &mut reqwest::Response,
-    stream: &mut tokio::process::ChildStdin,
-) -> std::io::Result<u64> {
-    let mut total_received_bytes = 0;
-    loop {
-        let chunk = match response.chunk().await {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(why) => {
-                log::warn!("Error while reading stream: {}", why);
-                break;
-            }
-        };
-
-        total_received_bytes += chunk.len() as u64;
-        pipe_chunk(chunk.as_ref(), stream).await?;
-    }
-    Ok(total_received_bytes)
 }

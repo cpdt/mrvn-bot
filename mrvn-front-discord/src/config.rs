@@ -50,6 +50,7 @@ pub struct Config {
     pub disconnect_check_interval_secs: u64,
     pub only_disconnect_when_alone: bool,
 
+    pub buffer_kb: usize,
     pub search_prefix: String,
     pub host_blocklist: Vec<String>,
     pub ytdl: YtdlConfig,
@@ -100,6 +101,7 @@ impl Config {
             ytdl_args: &self.ytdl.args,
             ffmpeg_name: &self.ffmpeg.name,
             ffmpeg_args: &self.ffmpeg.args,
+            buffer_kb: self.buffer_kb,
         }
     }
 }
