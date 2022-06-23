@@ -242,7 +242,7 @@ impl Frontend {
                                 .config
                                 .secret_highfive
                                 .as_ref()
-                                .ok_or(crate::error::Error::UnknownCommand("highfive".to_string()))?
+                                .ok_or_else(|| crate::error::Error::UnknownCommand("highfive".to_string()))?
                                 .image_url
                                 .clone(),
                         })])
