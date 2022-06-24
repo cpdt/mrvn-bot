@@ -1113,15 +1113,8 @@ impl Frontend {
         while let Some(next_song) =
             guild_model.next_channel_entry_finished(&delegate, current_channel_id)
         {
+            log::trace!("Playing \"{}\" to speaker", next_song.song.metadata.title);
             let next_metadata = next_song.song.metadata.clone();
-            log::trace!("Playing \"{}\" to speaker", next_metadata.title);
-
-            self.clone().update_queued_message(
-                ctx,
-                current_channel_id,
-                next_song.queue_message_id,
-                next_song.song.metadata.clone(),
-            );
 
             let play_res = speaker_ended_ref
                 .play(
@@ -1134,6 +1127,13 @@ impl Frontend {
                     },
                 )
                 .await;
+
+            self.clone().update_queued_message(
+                ctx,
+                current_channel_id,
+                next_song.queue_message_id,
+                next_metadata.clone(),
+            );
 
             match play_res {
                 Ok(guild_speaker) => {
@@ -1173,13 +1173,7 @@ impl Frontend {
         queued_song: QueuedSong,
     ) -> Result<(), crate::error::Error> {
         log::trace!("Playing \"{}\" to speaker", queued_song.song.metadata.title);
-
-        self.clone().update_queued_message(
-            ctx,
-            channel_id,
-            queued_song.queue_message_id,
-            queued_song.song.metadata.clone(),
-        );
+        let metadata = queued_song.song.metadata.clone();
 
         let play_res = guild_speaker
             .play(
@@ -1193,6 +1187,9 @@ impl Frontend {
                 },
             )
             .await;
+
+        self.clone()
+            .update_queued_message(ctx, channel_id, queued_song.queue_message_id, metadata);
 
         match play_res {
             Ok(()) => Ok(()),
