@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::message::default_action_delegate::DefaultActionDelegate;
 use crate::message::{ActionUpdater, Message};
 use futures::prelude::*;
-use mrvn_back_ytdl::Song;
 use mrvn_model::{ChannelActionMessage, GuildModel};
 use serenity::model::prelude::ChannelId;
 use serenity::{
@@ -12,6 +11,7 @@ use serenity::{
     },
 };
 use std::sync::Arc;
+use crate::queued_song::QueuedSong;
 
 #[derive(Clone, Copy)]
 pub enum SendMessageDestination<'interaction> {
@@ -26,7 +26,7 @@ pub async fn send_messages(
     config: &Arc<Config>,
     ctx: &Context,
     destination: SendMessageDestination<'_>,
-    guild_model: &mut GuildModel<Song>,
+    guild_model: &mut GuildModel<QueuedSong>,
     mut messages: Vec<Message>,
 ) -> Result<(), crate::error::Error> {
     let message_channel_id = match destination {
@@ -115,7 +115,13 @@ pub async fn send_messages(
                             )),
                         })
                     }
-                    Message::Response(_) => None,
+                    Message::Response { delegate, .. } => {
+                        if let Some(delegate) = delegate {
+                            delegate.sent(channel_message.channel_id, channel_message.id);
+                        }
+
+                        None
+                    },
                 }
             }
             _ => None,
@@ -152,7 +158,13 @@ pub async fn send_messages(
                     )),
                 }))
             }
-            Message::Response(_) => Ok(None),
+            Message::Response { delegate, .. } => {
+                if let Some(delegate) = delegate {
+                    delegate.sent(channel_message.channel_id, channel_message.id);
+                }
+
+                Ok(None)
+            },
         }
     }));
 

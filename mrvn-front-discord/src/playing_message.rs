@@ -164,10 +164,6 @@ async fn update_playing_message_loop(mut metadata: ActivePlayingActionMetadata) 
         }
         None => max_update_secs,
     };
-    log::trace!(
-        "Updating the progress bar every {} secs",
-        update_period_secs
-    );
     let period_duration = Duration::from_secs_f64(update_period_secs);
 
     let mut interval = tokio::time::interval_at(Instant::now() + period_duration, period_duration);

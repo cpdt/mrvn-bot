@@ -1,13 +1,13 @@
 use crate::message::time_bar::format_time_bar;
 use serenity::model::prelude::*;
 
-mod action_delegate;
+mod message_delegate;
 mod action_updater;
 mod default_action_delegate;
 mod send_message;
 pub mod time_bar;
 
-pub use self::action_delegate::*;
+pub use self::message_delegate::*;
 pub use self::action_updater::*;
 pub use self::send_message::*;
 
@@ -17,14 +17,17 @@ pub enum Message {
         voice_channel: ChannelId,
         delegate: Option<Box<dyn ActionDelegate>>,
     },
-    Response(ResponseMessage),
+    Response {
+        message: ResponseMessage,
+        delegate: Option<Box<dyn ResponseDelegate>>,
+    },
 }
 
 impl Message {
     pub fn is_action(&self) -> bool {
         match self {
             Message::Action { .. } => true,
-            Message::Response(_) => false,
+            Message::Response { .. } => false,
         }
     }
 
@@ -39,7 +42,7 @@ impl Message {
                 voice_channel,
                 ..
             } => message.create_embed(embed, config, *voice_channel),
-            Message::Response(response) => response.create_embed(embed, config),
+            Message::Response { message, .. } => message.create_embed(embed, config),
         }
     }
 }
