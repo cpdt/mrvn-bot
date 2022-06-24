@@ -49,6 +49,8 @@ pub struct Config {
     pub disconnect_min_inactive_secs: u64,
     pub disconnect_check_interval_secs: u64,
     pub only_disconnect_when_alone: bool,
+    pub progress_min_update_secs: f64,
+    pub progress_max_update_secs: f64,
 
     pub buffer_kb: usize,
     pub search_prefix: String,
@@ -72,6 +74,22 @@ impl Config {
                 message_key
             }
         }
+    }
+
+    pub fn format_time(&self, seconds: f64, minutes_width: usize) -> (String, usize) {
+        let minutes = (seconds / 60.).floor();
+        let seconds = (seconds % 60.).floor();
+
+        let minutes_string = format!("{:0>width$}", minutes, width = minutes_width);
+        let seconds_string = format!("{:0>2}", seconds);
+
+        (
+            self.get_message(
+                "time",
+                &[("minutes", &minutes_string), ("seconds", &seconds_string)],
+            ),
+            minutes_string.len(),
+        )
     }
 
     pub fn get_message(&self, message_key: &str, substitutions: &[(&str, &str)]) -> String {

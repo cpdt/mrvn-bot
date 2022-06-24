@@ -2,6 +2,7 @@ use crate::{GuildSpeakerHandle, GuildSpeakerRef, SongMetadata, Speaker};
 use futures::prelude::*;
 use serenity::model::prelude::*;
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub struct Brain {
     pub speakers: Vec<Arc<Speaker>>,
@@ -64,6 +65,20 @@ impl<'handle> BrainSpeakersRef<'handle> {
                 guild_speaker.active_metadata(),
             ) {
                 if current_channel_id == channel_id {
+                    return Some((guild_speaker, metadata));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn find_active_song(
+        &mut self,
+        song_id: Uuid,
+    ) -> Option<(&mut GuildSpeakerRef<'handle>, SongMetadata)> {
+        for guild_speaker in &mut self.guild_speaker_refs {
+            if let Some(metadata) = guild_speaker.active_metadata() {
+                if metadata.id == song_id {
                     return Some((guild_speaker, metadata));
                 }
             }

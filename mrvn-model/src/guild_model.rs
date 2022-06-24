@@ -1,6 +1,7 @@
 use crate::{AppModelConfig, AppModelDelegate};
 use chrono::{Date, TimeZone, Utc};
 use serenity::model::prelude::*;
+use std::any::Any;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -64,8 +65,13 @@ impl ChannelPlayingState {
     }
 }
 
+pub struct ChannelActionMessage {
+    pub frontend_handle: Box<dyn Any + Send + Sync>,
+}
+
 struct ChannelModel {
     playing: ChannelPlayingState,
+    last_action_message: Option<ChannelActionMessage>,
 }
 
 struct SecretStreak {
@@ -73,16 +79,9 @@ struct SecretStreak {
     streak_days: u64,
 }
 
-#[derive(Clone, Copy)]
-pub struct GuildActionMessage {
-    pub channel_id: ChannelId,
-    pub message_id: MessageId,
-}
-
 pub struct GuildModel<QueueEntry> {
     config: AppModelConfig,
     message_channel: Option<ChannelId>,
-    last_action_message: Option<GuildActionMessage>,
     queues: Vec<Queue<QueueEntry>>,
     channels: HashMap<ChannelId, ChannelModel>,
 
@@ -94,7 +93,6 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         GuildModel {
             config,
             message_channel: None,
-            last_action_message: None,
             queues: Vec::new(),
             channels: HashMap::new(),
 
@@ -110,12 +108,21 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         self.message_channel = message_channel;
     }
 
-    pub fn last_action_message(&self) -> Option<GuildActionMessage> {
-        self.last_action_message
+    pub fn clear_last_action_message(
+        &mut self,
+        channel_id: ChannelId,
+    ) -> Option<ChannelActionMessage> {
+        self.channels
+            .get_mut(&channel_id)
+            .and_then(|channel| std::mem::take(&mut channel.last_action_message))
     }
 
-    pub fn set_last_action_message(&mut self, status_message: Option<GuildActionMessage>) {
-        self.last_action_message = status_message;
+    pub fn set_last_action_message(
+        &mut self,
+        channel_id: ChannelId,
+        status_message: Option<ChannelActionMessage>,
+    ) {
+        self.create_channel(channel_id).last_action_message = status_message;
     }
 
     pub fn is_channel_stopped(&self, channel_id: ChannelId) -> bool {
@@ -373,6 +380,7 @@ impl<QueueEntry> GuildModel<QueueEntry> {
     fn create_channel(&mut self, channel_id: ChannelId) -> &mut ChannelModel {
         self.channels.entry(channel_id).or_insert(ChannelModel {
             playing: ChannelPlayingState::NotPlaying,
+            last_action_message: None,
         })
     }
 

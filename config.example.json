@@ -7,7 +7,9 @@
   "disconnect_min_inactive_secs": 600,
   "disconnect_check_interval_secs": 600,
   "only_disconnect_when_alone": true,
-  "buffer_kb": 16,
+  "progress_min_update_secs": 1,
+  "progress_max_update_secs": 15,
+  "buffer_kb": 64,
   "search_prefix": "ytsearch1",
   "host_blocklist": [],
   "ytdl": {
@@ -33,8 +35,13 @@
     }
   ],
   "messages": {
-    "action.playing": ":robot: :loud_sound: Playing [{song_title}](<{song_url}>) in <#{voice_channel_id}> (added by <@{user_id}>)",
-    "action.playing_response": ":robot: :loud_sound: Playing [{song_title}](<{song_url}>) in <#{voice_channel_id}>",
+    "time": "{minutes}:{seconds}",
+    "duration.unknown": "?",
+    "time_and_duration": "{time} / {duration}",
+
+    "action.playing": ":robot: :loud_sound: Playing [{song_title}](<{song_url}>) in <#{voice_channel_id}> (added by <@{user_id}>)\n\n`{time}`",
+    "action.playing_response": ":robot: :loud_sound: Playing [{song_title}](<{song_url}>) in <#{voice_channel_id}>\n\n`{time}`",
+    "action.played": ":robot: :loud_sound: Played [{song_title}](<{song_url}>) in <#{voice_channel_id}>",
     "action.finished": ":robot: :blush: Nothing left to play in <#{voice_channel_id}>",
     "action.unknown_error": ":robot: :weary: An error occurred",
     "action.no_speakers_error": ":robot: :weary: No bots are available to play in <#{voice_channel_id}>, try again when one is",

@@ -1,8 +1,9 @@
 use crate::config::Config;
-use crate::message::Message;
+use crate::message::default_action_delegate::DefaultActionDelegate;
+use crate::message::{ActionUpdater, Message};
 use futures::prelude::*;
 use mrvn_back_ytdl::Song;
-use mrvn_model::{GuildActionMessage, GuildModel};
+use mrvn_model::{ChannelActionMessage, GuildModel};
 use serenity::model::prelude::ChannelId;
 use serenity::{
     client::Context,
@@ -10,6 +11,7 @@ use serenity::{
         application_command::ApplicationCommandInteraction, InteractionResponseType,
     },
 };
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 pub enum SendMessageDestination<'interaction> {
@@ -21,7 +23,7 @@ pub enum SendMessageDestination<'interaction> {
 }
 
 pub async fn send_messages(
-    config: &Config,
+    config: &Arc<Config>,
     ctx: &Context,
     destination: SendMessageDestination<'_>,
     guild_model: &mut GuildModel<Song>,
@@ -34,8 +36,17 @@ pub async fn send_messages(
 
     // Action messages are special: we only keep the latest one around. This also means out of
     // this list we only want to send the last action message.
-    let maybe_last_action_message_index = messages.iter().rposition(|message| message.is_action());
-    if let Some(last_action_message_index) = maybe_last_action_message_index {
+    let maybe_last_action_message =
+        messages
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, message)| match message {
+                Message::Action { voice_channel, .. } => Some((index, *voice_channel)),
+                _ => None,
+            });
+
+    if let Some((last_action_message_index, _)) = maybe_last_action_message {
         let mut index = 0;
         messages.retain(|message| {
             let is_valid = !message.is_action() || index == last_action_message_index;
@@ -52,35 +63,65 @@ pub async fn send_messages(
         SendMessageDestination::Interaction { .. } => messages_iter.next(),
     };
     let first_message_future = async {
-        if let (
-            SendMessageDestination::Interaction {
-                interaction,
-                is_edit,
-            },
-            Some(first_message),
-        ) = (destination, maybe_first_message)
-        {
-            if is_edit {
-                interaction
-                    .edit_original_interaction_response(&ctx.http, |response| {
-                        response.create_embed(|embed| first_message.create_embed(embed, config))
-                    })
-                    .await
-                    .map_err(crate::error::Error::Serenity)?;
-            } else {
-                interaction
-                    .create_interaction_response(&ctx.http, |response| {
-                        response
-                            .kind(InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|data| {
-                                data.create_embed(|embed| first_message.create_embed(embed, config))
-                            })
-                    })
-                    .await
-                    .map_err(crate::error::Error::Serenity)?;
+        let message_maybe = match (destination, maybe_first_message) {
+            (
+                SendMessageDestination::Interaction {
+                    interaction,
+                    is_edit,
+                },
+                Some(first_message),
+            ) => {
+                let channel_message = if is_edit {
+                    interaction
+                        .edit_original_interaction_response(&ctx.http, |response| {
+                            response.create_embed(|embed| first_message.create_embed(embed, config))
+                        })
+                        .await
+                        .map_err(crate::error::Error::Serenity)?
+                } else {
+                    interaction
+                        .create_interaction_response(&ctx.http, |response| {
+                            response
+                                .kind(InteractionResponseType::ChannelMessageWithSource)
+                                .interaction_response_data(|data| {
+                                    data.create_embed(|embed| {
+                                        first_message.create_embed(embed, config)
+                                    })
+                                })
+                        })
+                        .await
+                        .map_err(crate::error::Error::Serenity)?;
+                    interaction
+                        .get_interaction_response(&ctx.http)
+                        .await
+                        .map_err(crate::error::Error::Serenity)?
+                };
+
+                match first_message {
+                    Message::Action {
+                        delegate,
+                        voice_channel,
+                        ..
+                    } => {
+                        let delegate = delegate.unwrap_or_else(|| Box::new(DefaultActionDelegate));
+                        Some(ChannelActionMessage {
+                            frontend_handle: delegate.start(ActionUpdater::new(
+                                channel_message.channel_id,
+                                channel_message.id,
+                                voice_channel,
+                                true,
+                                config.clone(),
+                                ctx.http.clone(),
+                            )),
+                        })
+                    }
+                    Message::Response(_) => None,
+                }
             }
-        }
-        Ok(())
+            _ => None,
+        };
+
+        Ok(message_maybe)
     };
 
     // Send each remaining message as a regular message. If the message is the possible one
@@ -93,50 +134,45 @@ pub async fn send_messages(
             .await
             .map_err(crate::error::Error::Serenity)?;
 
-        if message.is_action() {
-            Ok(Some(channel_message))
-        } else {
-            Ok(None)
+        match message {
+            Message::Action {
+                delegate,
+                voice_channel,
+                ..
+            } => {
+                let delegate = delegate.unwrap_or_else(|| Box::new(DefaultActionDelegate));
+                Ok(Some(ChannelActionMessage {
+                    frontend_handle: delegate.start(ActionUpdater::new(
+                        channel_message.channel_id,
+                        channel_message.id,
+                        voice_channel,
+                        false,
+                        config.clone(),
+                        ctx.http.clone(),
+                    )),
+                }))
+            }
+            Message::Response(_) => Ok(None),
         }
     }));
 
     // Delete the guild's latest action message from before this operation, if this operation
     // sent an action message.
-    let old_action_message = guild_model.last_action_message();
-    let delete_old_action_message_future = async {
-        if maybe_last_action_message_index.is_some() {
-            if let Some(old_action_message) = old_action_message {
-                old_action_message
-                    .channel_id
-                    .delete_message(&ctx.http, old_action_message.message_id)
-                    .await
-                    .map_err(crate::error::Error::Serenity)?;
-            }
-        }
-        Ok(())
-    };
+    if let Some((_, last_action_message_channel)) = maybe_last_action_message {
+        guild_model.clear_last_action_message(last_action_message_channel);
+    }
 
     // Execute all the message sending!
-    let (_, remaining_messages, _) = futures::try_join!(
-        first_message_future,
-        remaining_messages_future,
-        delete_old_action_message_future
-    )?;
+    let (first_message, remaining_messages) =
+        futures::try_join!(first_message_future, remaining_messages_future)?;
 
-    // Set the guild's last action message to the message we sent, if there was one.
-    // If we were expecting an action message but there isn't one collected after sending,
-    // the action message was probably sent as the interaction response. This can't be deleted
-    // later so we record there being no last action message.
-    if maybe_last_action_message_index.is_some() {
-        let maybe_sent_message = remaining_messages
-            .iter()
-            .find_map(|maybe_message| maybe_message.as_ref());
-        guild_model.set_last_action_message(maybe_sent_message.map(|sent_message| {
-            GuildActionMessage {
-                channel_id: sent_message.channel_id,
-                message_id: sent_message.id,
-            }
-        }));
+    // Set the channel's last action message to the message we sent, if there was one.
+    if let Some((_, last_action_message_channel)) = maybe_last_action_message {
+        let maybe_sent_message = std::iter::once(first_message)
+            .chain(remaining_messages.into_iter())
+            .find_map(|maybe_message| maybe_message);
+
+        guild_model.set_last_action_message(last_action_message_channel, maybe_sent_message);
     }
 
     Ok(())

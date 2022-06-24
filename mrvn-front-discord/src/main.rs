@@ -11,6 +11,7 @@ mod error;
 mod frontend;
 mod message;
 mod model_delegate;
+mod playing_message;
 mod voice_handler;
 
 #[tokio::main]

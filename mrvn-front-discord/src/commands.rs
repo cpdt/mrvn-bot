@@ -74,6 +74,14 @@ fn stop_command(
         .description("Vote to skip the current song and stop playback.")
 }
 
+fn nowplaying_command(
+    command: &mut serenity::builder::CreateApplicationCommand,
+) -> &mut serenity::builder::CreateApplicationCommand {
+    command
+        .name("nowplaying")
+        .description("View the current playing song and its progress.")
+}
+
 fn secret_highfive_command(
     command: &mut serenity::builder::CreateApplicationCommand,
 ) -> &mut serenity::builder::CreateApplicationCommand {
@@ -105,6 +113,7 @@ pub async fn register_commands(
                 guild_id.create_application_command(http_ref, pause_command),
                 guild_id.create_application_command(http_ref, skip_command),
                 guild_id.create_application_command(http_ref, stop_command),
+                guild_id.create_application_command(http_ref, nowplaying_command),
             )?;
 
             if config.secret_highfive.is_some() {
@@ -125,7 +134,8 @@ pub async fn register_commands(
                         .create_application_command(replace_command)
                         .create_application_command(pause_command)
                         .create_application_command(skip_command)
-                        .create_application_command(stop_command);
+                        .create_application_command(stop_command)
+                        .create_application_command(nowplaying_command);
 
                     if config.secret_highfive.is_some() {
                         commands

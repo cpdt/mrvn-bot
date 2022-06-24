@@ -10,6 +10,7 @@ use std::process::{Child, Command, Stdio};
 use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
+use uuid::Uuid;
 
 const DEFAULT_FFMPEG_ARGS: &[&str] = &[
     "-vn",
@@ -45,7 +46,9 @@ struct YtdlOutput {
     pub title: String,
     pub webpage_url: String,
     pub url: String,
+    pub thumbnail: Option<String>,
     pub http_headers: HashMap<String, String>,
+    pub duration: Option<f64>,
 }
 
 fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
@@ -59,8 +62,15 @@ fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
 
     Ok(Song {
         metadata: SongMetadata {
-            title: value.title.to_string(),
-            url: value.webpage_url.to_string(),
+            id: Uuid::new_v4(),
+            title: value.title,
+            url: value.webpage_url,
+            thumbnail_url: value.thumbnail,
+            duration_seconds: if value.duration == Some(0.) {
+                None
+            } else {
+                value.duration
+            },
             user_id,
         },
         download_url: value.url.to_string(),
@@ -233,8 +243,11 @@ impl Song {
 
 #[derive(Clone)]
 pub struct SongMetadata {
+    pub id: Uuid,
     pub title: String,
     pub url: String,
+    pub thumbnail_url: Option<String>,
+    pub duration_seconds: Option<f64>,
     pub user_id: UserId,
 }
 

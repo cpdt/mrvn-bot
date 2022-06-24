@@ -4,7 +4,7 @@ use serenity::client::ClientBuilder;
 use serenity::{model::prelude::*, prelude::*};
 use std::ops::DerefMut;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::MutexGuard;
 
 pub struct SpeakerKey;
@@ -152,6 +152,12 @@ impl<'handle> GuildSpeakerRef<'handle> {
             .playing_state
             .as_ref()
             .map(|state| state.metadata.clone())
+    }
+
+    pub async fn active_play_time(&self) -> Option<Duration> {
+        let playing_state = self.guild_speaker.playing_state.as_ref()?;
+        let track_state = playing_state.track.get_info().await.ok()?;
+        Some(track_state.position)
     }
 
     pub async fn play<Ended: EndedHandler>(
@@ -356,22 +362,26 @@ impl<'handle> GuildSpeakerEndedRef<'handle> {
         song: Song,
         config: &PlayConfig<'_>,
         ended_handler: Ended,
-    ) -> Result<(), (GuildSpeakerEndedRef<'handle>, crate::error::Error)> {
+    ) -> Result<GuildSpeakerRef<'handle>, (GuildSpeakerEndedRef<'handle>, crate::error::Error)>
+    {
         match self.guild_speaker_ref.current_channel() {
-            Some(channel_id) => self
-                .guild_speaker_ref
-                .play(channel_id, song, config, ended_handler)
-                .await
-                .map_err(|err| (self, err)),
-            None => {
-                self.stop();
-                Ok(())
+            Some(channel_id) => {
+                match self
+                    .guild_speaker_ref
+                    .play(channel_id, song, config, ended_handler)
+                    .await
+                {
+                    Ok(_) => Ok(self.guild_speaker_ref),
+                    Err(err) => Err((self, err)),
+                }
             }
+            None => Ok(self.stop()),
         }
     }
 
-    pub fn stop(mut self) {
+    pub fn stop(mut self) -> GuildSpeakerRef<'handle> {
         self.guild_speaker_ref.guild_speaker.playing_state = None;
         self.guild_speaker_ref.guild_speaker.last_ended_time = Some(Instant::now());
+        self.guild_speaker_ref
     }
 }

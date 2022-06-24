@@ -1,19 +1,29 @@
+use crate::message::time_bar::format_time_bar;
 use serenity::model::prelude::*;
 
+mod action_delegate;
+mod action_updater;
+mod default_action_delegate;
 mod send_message;
+pub mod time_bar;
 
+pub use self::action_delegate::*;
+pub use self::action_updater::*;
 pub use self::send_message::*;
 
-#[derive(Debug, Clone)]
 pub enum Message {
-    Action(ActionMessage),
+    Action {
+        message: ActionMessage,
+        voice_channel: ChannelId,
+        delegate: Option<Box<dyn ActionDelegate>>,
+    },
     Response(ResponseMessage),
 }
 
 impl Message {
     pub fn is_action(&self) -> bool {
         match self {
-            Message::Action(_) => true,
+            Message::Action { .. } => true,
             Message::Response(_) => false,
         }
     }
@@ -24,7 +34,11 @@ impl Message {
         config: &crate::config::Config,
     ) -> &'e mut serenity::builder::CreateEmbed {
         match self {
-            Message::Action(action) => action.create_embed(embed, config),
+            Message::Action {
+                message,
+                voice_channel,
+                ..
+            } => message.create_embed(embed, config, *voice_channel),
             Message::Response(response) => response.create_embed(embed, config),
         }
     }
@@ -40,18 +54,34 @@ pub enum ActionMessage {
         song_url: String,
         voice_channel_id: ChannelId,
         user_id: UserId,
+        thumbnail_url: Option<String>,
+        time_seconds: f64,
+        duration_seconds: Option<f64>,
     },
     PlayingResponse {
         song_title: String,
         song_url: String,
         voice_channel_id: ChannelId,
+        thumbnail_url: Option<String>,
+        time_seconds: f64,
+        duration_seconds: Option<f64>,
     },
-    Finished {
-        voice_channel_id: ChannelId,
+    Played {
+        song_title: String,
+        song_url: String,
     },
-    NoSpeakersError {
-        voice_channel_id: ChannelId,
+    Finished,
+    Paused {
+        song_title: String,
+        song_url: String,
+        user_id: UserId,
     },
+    Stopped {
+        song_title: String,
+        song_url: String,
+        user_id: UserId,
+    },
+    NoSpeakersError,
     UnknownError,
 }
 
@@ -85,12 +115,6 @@ pub enum ResponseMessage {
         old_song_url: String,
         voice_channel_id: ChannelId,
     },
-    Paused {
-        song_title: String,
-        song_url: String,
-        voice_channel_id: ChannelId,
-        user_id: UserId,
-    },
     Skipped {
         song_title: String,
         song_url: String,
@@ -102,12 +126,6 @@ pub enum ResponseMessage {
         song_url: String,
         voice_channel_id: ChannelId,
         count: usize,
-    },
-    Stopped {
-        song_title: String,
-        song_url: String,
-        voice_channel_id: ChannelId,
-        user_id: UserId,
     },
     StopMoreVotesNeeded {
         voice_channel_id: ChannelId,
@@ -145,18 +163,84 @@ pub enum ResponseMessage {
 }
 
 impl ActionMessage {
-    pub fn to_string(&self, config: &crate::config::Config) -> String {
+    pub fn to_string(&self, config: &crate::config::Config, voice_channel_id: ChannelId) -> String {
         match self {
             ActionMessage::Playing {
                 song_title,
                 song_url,
                 voice_channel_id,
                 user_id,
+                time_seconds,
+                duration_seconds,
+                ..
+            } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                let user_id_string = user_id.0.to_string();
+                let time_string = format_time_bar(config, *time_seconds, *duration_seconds);
+
+                config.get_message(
+                    "action.playing",
+                    &[
+                        ("song_title", song_title),
+                        ("song_url", song_url),
+                        ("voice_channel_id", &channel_id_string),
+                        ("user_id", &user_id_string),
+                        ("time", &time_string),
+                    ],
+                )
+            }
+            ActionMessage::PlayingResponse {
+                song_title,
+                song_url,
+                voice_channel_id,
+                time_seconds,
+                duration_seconds,
+                ..
+            } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                let time_string = format_time_bar(config, *time_seconds, *duration_seconds);
+
+                config.get_message(
+                    "action.playing_response",
+                    &[
+                        ("song_title", song_title),
+                        ("song_url", song_url),
+                        ("voice_channel_id", &channel_id_string),
+                        ("time", &time_string),
+                    ],
+                )
+            }
+            ActionMessage::Played {
+                song_title,
+                song_url,
+            } => {
+                let channel_id_string = voice_channel_id.0.to_string();
+
+                config.get_message(
+                    "action.played",
+                    &[
+                        ("song_title", song_title),
+                        ("song_url", song_url),
+                        ("voice_channel_id", &channel_id_string),
+                    ],
+                )
+            }
+            ActionMessage::Finished => {
+                let channel_id_string = voice_channel_id.0.to_string();
+                config.get_message(
+                    "action.finished",
+                    &[("voice_channel_id", &channel_id_string)],
+                )
+            }
+            ActionMessage::Paused {
+                song_title,
+                song_url,
+                user_id,
             } => {
                 let channel_id_string = voice_channel_id.0.to_string();
                 let user_id_string = user_id.0.to_string();
                 config.get_message(
-                    "action.playing",
+                    "response.paused",
                     &[
                         ("song_title", song_title),
                         ("song_url", song_url),
@@ -165,29 +249,24 @@ impl ActionMessage {
                     ],
                 )
             }
-            ActionMessage::PlayingResponse {
+            ActionMessage::Stopped {
                 song_title,
                 song_url,
-                voice_channel_id,
+                user_id,
             } => {
                 let channel_id_string = voice_channel_id.0.to_string();
+                let user_id_string = user_id.0.to_string();
                 config.get_message(
-                    "action.playing_response",
+                    "response.stopped",
                     &[
                         ("song_title", song_title),
                         ("song_url", song_url),
                         ("voice_channel_id", &channel_id_string),
+                        ("user_id", &user_id_string),
                     ],
                 )
             }
-            ActionMessage::Finished { voice_channel_id } => {
-                let channel_id_string = voice_channel_id.0.to_string();
-                config.get_message(
-                    "action.finished",
-                    &[("voice_channel_id", &channel_id_string)],
-                )
-            }
-            ActionMessage::NoSpeakersError { voice_channel_id } => {
+            ActionMessage::NoSpeakersError => {
                 let channel_id_string = voice_channel_id.0.to_string();
                 config.get_message(
                     "action.no_speakers_error",
@@ -200,11 +279,28 @@ impl ActionMessage {
         }
     }
 
+    pub fn get_thumbnail(&self) -> Option<&str> {
+        match self {
+            ActionMessage::Playing {
+                thumbnail_url: Some(thumbnail),
+                ..
+            }
+            | ActionMessage::PlayingResponse {
+                thumbnail_url: Some(thumbnail),
+                ..
+            } => Some(thumbnail),
+            _ => None,
+        }
+    }
+
     pub fn is_error(&self) -> bool {
         match self {
             ActionMessage::Playing { .. }
             | ActionMessage::PlayingResponse { .. }
-            | ActionMessage::Finished { .. } => false,
+            | ActionMessage::Played { .. }
+            | ActionMessage::Finished { .. }
+            | ActionMessage::Paused { .. }
+            | ActionMessage::Stopped { .. } => false,
             ActionMessage::NoSpeakersError { .. } | ActionMessage::UnknownError => true,
         }
     }
@@ -213,14 +309,21 @@ impl ActionMessage {
         &self,
         embed: &'e mut serenity::builder::CreateEmbed,
         config: &crate::config::Config,
+        voice_channel_id: ChannelId,
     ) -> &'e mut serenity::builder::CreateEmbed {
         embed
-            .description(self.to_string(config))
+            .description(self.to_string(config, voice_channel_id))
             .color(if self.is_error() {
                 config.error_embed_color
             } else {
                 config.action_embed_color
-            })
+            });
+
+        if let Some(thumbnail) = self.get_thumbnail() {
+            embed.thumbnail(thumbnail);
+        }
+
+        embed
     }
 }
 
@@ -285,24 +388,6 @@ impl ResponseMessage {
                     ],
                 )
             }
-            ResponseMessage::Paused {
-                song_title,
-                song_url,
-                voice_channel_id,
-                user_id,
-            } => {
-                let channel_id_string = voice_channel_id.0.to_string();
-                let user_id_string = user_id.0.to_string();
-                config.get_message(
-                    "response.paused",
-                    &[
-                        ("song_title", song_title),
-                        ("song_url", song_url),
-                        ("voice_channel_id", &channel_id_string),
-                        ("user_id", &user_id_string),
-                    ],
-                )
-            }
             ResponseMessage::Skipped {
                 song_title,
                 song_url,
@@ -349,24 +434,6 @@ impl ResponseMessage {
                         ],
                     )
                 }
-            }
-            ResponseMessage::Stopped {
-                song_title,
-                song_url,
-                voice_channel_id,
-                user_id,
-            } => {
-                let channel_id_string = voice_channel_id.0.to_string();
-                let user_id_string = user_id.0.to_string();
-                config.get_message(
-                    "response.stopped",
-                    &[
-                        ("song_title", song_title),
-                        ("song_url", song_url),
-                        ("voice_channel_id", &channel_id_string),
-                        ("user_id", &user_id_string),
-                    ],
-                )
             }
             ResponseMessage::StopMoreVotesNeeded {
                 voice_channel_id,
@@ -465,10 +532,8 @@ impl ResponseMessage {
             | ResponseMessage::QueuedMultipleNoSpeakers { .. }
             | ResponseMessage::Replaced { .. }
             | ResponseMessage::ReplaceSkipped { .. }
-            | ResponseMessage::Paused { .. }
             | ResponseMessage::Skipped { .. }
             | ResponseMessage::SkipMoreVotesNeeded { .. }
-            | ResponseMessage::Stopped { .. }
             | ResponseMessage::StopMoreVotesNeeded { .. }
             | ResponseMessage::ImageEmbed { .. }
             | ResponseMessage::StreakWait
