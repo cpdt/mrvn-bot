@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::message::default_action_delegate::DefaultActionDelegate;
 use crate::message::{ActionUpdater, Message};
+use crate::queued_song::QueuedSong;
 use futures::prelude::*;
 use mrvn_model::{ChannelActionMessage, GuildModel};
 use serenity::model::prelude::ChannelId;
@@ -11,7 +12,6 @@ use serenity::{
     },
 };
 use std::sync::Arc;
-use crate::queued_song::QueuedSong;
 
 #[derive(Clone, Copy)]
 pub enum SendMessageDestination<'interaction> {
@@ -121,7 +121,7 @@ pub async fn send_messages(
                         }
 
                         None
-                    },
+                    }
                 }
             }
             _ => None,
@@ -164,7 +164,7 @@ pub async fn send_messages(
                 }
 
                 Ok(None)
-            },
+            }
         }
     }));
 

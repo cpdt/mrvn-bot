@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use serenity::model::id::{ChannelId, GuildId, MessageId, UserId};
-use uuid::Uuid;
 use crate::frontend::Frontend;
 use crate::message::{Message, ResponseDelegate, ResponseMessage};
+use serenity::model::id::{ChannelId, GuildId, MessageId, UserId};
+use std::sync::Arc;
+use uuid::Uuid;
 
 pub fn build_queued_message(
     frontend: Arc<Frontend>,
@@ -40,7 +40,9 @@ impl ResponseDelegate for QueuedResponseDelegate {
             let guild_model = ctx.frontend.model.get(ctx.guild_id);
             let mut guild_model_ref = guild_model.lock().await;
 
-            let queued_entry = guild_model_ref.find_user_entry_mut(ctx.user_id, |queued_song| queued_song.song.metadata.id == ctx.song_id);
+            let queued_entry = guild_model_ref.find_user_entry_mut(ctx.user_id, |queued_song| {
+                queued_song.song.metadata.id == ctx.song_id
+            });
             if let Some(entry) = queued_entry {
                 entry.queue_message_id = Some((channel_id, message_id));
             }

@@ -4,8 +4,13 @@ use crate::message::{
 };
 use crate::model_delegate::ModelDelegate;
 use crate::playing_message::build_playing_message;
+use crate::queued_message::build_queued_message;
+use crate::queued_song::QueuedSong;
 use futures::prelude::*;
-use mrvn_back_ytdl::{Brain, EndedHandler, GuildSpeakerEndedHandle, GuildSpeakerEndedRef, GuildSpeakerRef, Song, SongMetadata};
+use mrvn_back_ytdl::{
+    Brain, EndedHandler, GuildSpeakerEndedHandle, GuildSpeakerEndedRef, GuildSpeakerRef, Song,
+    SongMetadata,
+};
 use mrvn_model::{
     AppModel, GuildModel, NextEntry, ReplaceStatus, SecretStreakStatus, VoteStatus, VoteType,
 };
@@ -17,8 +22,6 @@ use serenity::{
 use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::queued_message::build_queued_message;
-use crate::queued_song::QueuedSong;
 
 const SEND_WORKING_TIMEOUT_MS: u64 = 50;
 
@@ -241,8 +244,8 @@ impl Frontend {
             "highfive" => {
                 log::debug!("Received highfive");
                 match guild_model.secret_add_streak(user_id) {
-                    SecretStreakStatus::Success => {
-                        Ok(vec![Message::Response{ message: ResponseMessage::ImageEmbed {
+                    SecretStreakStatus::Success => Ok(vec![Message::Response {
+                        message: ResponseMessage::ImageEmbed {
                             image_url: self
                                 .config
                                 .secret_highfive
@@ -252,20 +255,26 @@ impl Frontend {
                                 })?
                                 .image_url
                                 .clone(),
-                        }, delegate: None}])
-                    }
-                    SecretStreakStatus::Wait => {
-                        Ok(vec![Message::Response{ message: ResponseMessage::StreakWait, delegate: None}])
-                    }
+                        },
+                        delegate: None,
+                    }]),
+                    SecretStreakStatus::Wait => Ok(vec![Message::Response {
+                        message: ResponseMessage::StreakWait,
+                        delegate: None,
+                    }]),
                 }
             }
             "streak" => {
                 log::debug!("Received streak");
                 match guild_model.secret_get_streak(user_id) {
-                    0 => Ok(vec![Message::Response{ message: ResponseMessage::NoStreak, delegate: None}]),
-                    streak_length => Ok(vec![Message::Response{ message: ResponseMessage::Streak {
-                        streak_length,
-                    }, delegate: None}]),
+                    0 => Ok(vec![Message::Response {
+                        message: ResponseMessage::NoStreak,
+                        delegate: None,
+                    }]),
+                    streak_length => Ok(vec![Message::Response {
+                        message: ResponseMessage::Streak { streak_length },
+                        delegate: None,
+                    }]),
                 }
             }
             command_name => Err(crate::error::Error::UnknownCommand(
@@ -318,7 +327,13 @@ impl Frontend {
             QueuedSongsMetadata::Multiple(songs.len())
         };
 
-        guild_model.push_entries(user_id, songs.into_iter().map(|song| QueuedSong { song, queue_message_id: None }));
+        guild_model.push_entries(
+            user_id,
+            songs.into_iter().map(|song| QueuedSong {
+                song,
+                queue_message_id: None,
+            }),
+        );
 
         // From this point on the user needs to be in a channel, otherwise the songs will only stay
         // queued.
@@ -327,15 +342,21 @@ impl Frontend {
             None => {
                 log::trace!("User is not in any voice channel, song will remain queued");
                 return match metadata {
-                    QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(self.clone(), guild_id, user_id, song_metadata.id, ResponseMessage::Queued {
-                        song_title: song_metadata.title,
-                        song_url: song_metadata.url,
-                    })]),
+                    QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(
+                        self.clone(),
+                        guild_id,
+                        user_id,
+                        song_metadata.id,
+                        ResponseMessage::Queued {
+                            song_title: song_metadata.title,
+                            song_url: song_metadata.url,
+                        },
+                    )]),
                     QueuedSongsMetadata::Multiple(count) => Ok(vec![Message::Response {
                         message: ResponseMessage::QueuedMultiple { count },
                         delegate: None,
-                    }])
-                }
+                    }]),
+                };
             }
         };
 
@@ -351,14 +372,20 @@ impl Frontend {
                     "No speakers are available to handle playback, song will remain queued"
                 );
                 return match metadata {
-                    QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(self.clone(), guild_id, user_id, song_metadata.id, ResponseMessage::QueuedNoSpeakers {
-                        song_title: song_metadata.title,
-                        song_url: song_metadata.url,
-                    })]),
+                    QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(
+                        self.clone(),
+                        guild_id,
+                        user_id,
+                        song_metadata.id,
+                        ResponseMessage::QueuedNoSpeakers {
+                            song_title: song_metadata.title,
+                            song_url: song_metadata.url,
+                        },
+                    )]),
                     QueuedSongsMetadata::Multiple(count) => Ok(vec![Message::Response {
                         message: ResponseMessage::QueuedMultipleNoSpeakers { count },
                         delegate: None,
-                    }])
+                    }]),
                 };
             }
         };
@@ -369,14 +396,20 @@ impl Frontend {
             NextEntry::AlreadyPlaying | NextEntry::NoneAvailable => {
                 log::trace!("Channel is already playing, song will remain queued");
                 return match metadata {
-                    QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(self.clone(), guild_id, user_id, song_metadata.id, ResponseMessage::Queued {
-                        song_title: song_metadata.title,
-                        song_url: song_metadata.url,
-                    })]),
+                    QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(
+                        self.clone(),
+                        guild_id,
+                        user_id,
+                        song_metadata.id,
+                        ResponseMessage::Queued {
+                            song_title: song_metadata.title,
+                            song_url: song_metadata.url,
+                        },
+                    )]),
                     QueuedSongsMetadata::Multiple(count) => Ok(vec![Message::Response {
                         message: ResponseMessage::QueuedMultiple { count },
                         delegate: None,
-                    }])
+                    }]),
                 };
             }
         };
@@ -408,10 +441,16 @@ impl Frontend {
                     ])
                 } else {
                     Ok(vec![
-                        build_queued_message(self.clone(), guild_id, user_id, song_metadata.id, ResponseMessage::Queued {
-                            song_title: song_metadata.title,
-                            song_url: song_metadata.url,
-                        }),
+                        build_queued_message(
+                            self.clone(),
+                            guild_id,
+                            user_id,
+                            song_metadata.id,
+                            ResponseMessage::Queued {
+                                song_title: song_metadata.title,
+                                song_url: song_metadata.url,
+                            },
+                        ),
                         build_playing_message(
                             self.clone(),
                             guild_speaker,
@@ -424,7 +463,10 @@ impl Frontend {
                 }
             }
             QueuedSongsMetadata::Multiple(count) => Ok(vec![
-                Message::Response{ message: ResponseMessage::QueuedMultiple { count }, delegate: None },
+                Message::Response {
+                    message: ResponseMessage::QueuedMultiple { count },
+                    delegate: None,
+                },
                 build_playing_message(
                     self.clone(),
                     guild_speaker,
@@ -482,7 +524,7 @@ impl Frontend {
                 log::trace!(
                     "Found an unpaused speaker in the user's voice channel, playback will continue"
                 );
-                Ok(vec![Message::Response{
+                Ok(vec![Message::Response {
                     message: ResponseMessage::AlreadyPlayingError {
                         voice_channel_id: channel_id,
                     },
@@ -509,7 +551,7 @@ impl Frontend {
                 log::trace!(
                     "No songs are available to play back in the channel, nothing will be played"
                 );
-                return Ok(vec![Message::Response{
+                return Ok(vec![Message::Response {
                     message: ResponseMessage::NothingIsQueuedError {
                         voice_channel_id: channel_id,
                     },
@@ -570,7 +612,10 @@ impl Frontend {
             log::trace!("Resolved song query as {} songs", songs.len());
         }
 
-        let mut songs_iter = songs.into_iter().map(|song| QueuedSong { song, queue_message_id: None});
+        let mut songs_iter = songs.into_iter().map(|song| QueuedSong {
+            song,
+            queue_message_id: None,
+        });
         let queued_song = match songs_iter.next() {
             Some(song) => song,
             None => {
@@ -592,19 +637,31 @@ impl Frontend {
             // we need to start playing the next song.
             ReplaceStatus::Queued => {
                 log::trace!("No songs in queue to replace, song will be queued");
-                return Ok(vec![build_queued_message(self.clone(), guild_id, user_id, song_metadata.id, ResponseMessage::Queued {
-                    song_title: song_metadata.title,
-                    song_url: song_metadata.url,
-                })]);
+                return Ok(vec![build_queued_message(
+                    self.clone(),
+                    guild_id,
+                    user_id,
+                    song_metadata.id,
+                    ResponseMessage::Queued {
+                        song_title: song_metadata.title,
+                        song_url: song_metadata.url,
+                    },
+                )]);
             }
             ReplaceStatus::ReplacedInQueue(old_song) => {
                 log::trace!("Latest song in the users queue will be replaced");
-                return Ok(vec![build_queued_message(self.clone(), guild_id, user_id, song_metadata.id, ResponseMessage::Replaced {
-                    old_song_title: old_song.song.metadata.title,
-                    old_song_url: old_song.song.metadata.url,
-                    new_song_title: song_metadata.title,
-                    new_song_url: song_metadata.url,
-                })]);
+                return Ok(vec![build_queued_message(
+                    self.clone(),
+                    guild_id,
+                    user_id,
+                    song_metadata.id,
+                    ResponseMessage::Replaced {
+                        old_song_title: old_song.song.metadata.title,
+                        old_song_url: old_song.song.metadata.url,
+                        new_song_title: song_metadata.title,
+                        new_song_url: song_metadata.url,
+                    },
+                )]);
             }
             ReplaceStatus::ReplacedCurrent(channel_id) => channel_id,
         };
@@ -650,13 +707,16 @@ impl Frontend {
             ])
         } else {
             Ok(vec![
-                Message::Response{message:ResponseMessage::ReplaceSkipped {
-                    new_song_title: song_metadata.title,
-                    new_song_url: song_metadata.url,
-                    old_song_title: playing_metadata.title,
-                    old_song_url: playing_metadata.url,
-                    voice_channel_id: channel_id,
-                },delegate: None},
+                Message::Response {
+                    message: ResponseMessage::ReplaceSkipped {
+                        new_song_title: song_metadata.title,
+                        new_song_url: song_metadata.url,
+                        old_song_title: playing_metadata.title,
+                        old_song_url: playing_metadata.url,
+                        voice_channel_id: channel_id,
+                    },
+                    delegate: None,
+                },
                 build_playing_message(
                     self.clone(),
                     guild_speaker,
@@ -692,7 +752,7 @@ impl Frontend {
             Some((guild_speaker, active_metadata)) => {
                 if guild_speaker.is_paused() {
                     log::trace!("Found a paused speaker in the user's voice channel, playback will remain paused");
-                    Ok(vec![Message::Response{
+                    Ok(vec![Message::Response {
                         message: ResponseMessage::NothingIsPlayingError {
                             voice_channel_id: channel_id,
                         },
@@ -756,12 +816,15 @@ impl Frontend {
             (VoteStatus::Success, Some((guild_speaker, active_metadata))) => {
                 log::trace!("Skip command passed preconditions, stopping current playback");
                 guild_speaker.stop().map_err(crate::error::Error::Backend)?;
-                Ok(vec![Message::Response{message:ResponseMessage::Skipped {
-                    song_title: active_metadata.title,
-                    song_url: active_metadata.url,
-                    voice_channel_id: channel_id,
-                    user_id: active_metadata.user_id,
-                }, delegate: None}])
+                Ok(vec![Message::Response {
+                    message: ResponseMessage::Skipped {
+                        song_title: active_metadata.title,
+                        song_url: active_metadata.url,
+                        voice_channel_id: channel_id,
+                        user_id: active_metadata.user_id,
+                    },
+                    delegate: None,
+                }])
             }
             (VoteStatus::AlreadyVoted, Some((_, active_metadata))) => {
                 log::trace!("User attempting to skip has already voted, not stopping playback");
@@ -1053,7 +1116,12 @@ impl Frontend {
             let next_metadata = next_song.song.metadata.clone();
             log::trace!("Playing \"{}\" to speaker", next_metadata.title);
 
-            self.clone().update_queued_message(ctx, current_channel_id, next_song.queue_message_id, next_song.song.metadata.clone());
+            self.clone().update_queued_message(
+                ctx,
+                current_channel_id,
+                next_song.queue_message_id,
+                next_song.song.metadata.clone(),
+            );
 
             let play_res = speaker_ended_ref
                 .play(
@@ -1106,7 +1174,12 @@ impl Frontend {
     ) -> Result<(), crate::error::Error> {
         log::trace!("Playing \"{}\" to speaker", queued_song.song.metadata.title);
 
-        self.clone().update_queued_message(ctx, channel_id, queued_song.queue_message_id, queued_song.song.metadata.clone());
+        self.clone().update_queued_message(
+            ctx,
+            channel_id,
+            queued_song.queue_message_id,
+            queued_song.song.metadata.clone(),
+        );
 
         let play_res = guild_speaker
             .play(

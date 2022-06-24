@@ -136,11 +136,13 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         self.create_channel(channel_id).playing = ChannelPlayingState::Stopped;
     }
 
-    pub fn find_user_entry_mut(&mut self, user_id: UserId, mut f: impl FnMut(&QueueEntry) -> bool) -> Option<&mut QueueEntry> {
+    pub fn find_user_entry_mut(
+        &mut self,
+        user_id: UserId,
+        mut f: impl FnMut(&QueueEntry) -> bool,
+    ) -> Option<&mut QueueEntry> {
         if let Some(queue) = self.get_user_queue_mut(user_id) {
-            queue.entries
-                .iter_mut()
-                .find(|entry| f(*entry))
+            queue.entries.iter_mut().find(|entry| f(*entry))
         } else {
             None
         }

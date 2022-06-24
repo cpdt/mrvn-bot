@@ -12,9 +12,9 @@ mod frontend;
 mod message;
 mod model_delegate;
 mod playing_message;
-mod voice_handler;
-mod queued_song;
 mod queued_message;
+mod queued_song;
+mod voice_handler;
 
 #[tokio::main]
 async fn main() {

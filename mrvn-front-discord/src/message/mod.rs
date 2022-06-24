@@ -1,14 +1,14 @@
 use crate::message::time_bar::format_time_bar;
 use serenity::model::prelude::*;
 
-mod message_delegate;
 mod action_updater;
 mod default_action_delegate;
+mod message_delegate;
 mod send_message;
 pub mod time_bar;
 
-pub use self::message_delegate::*;
 pub use self::action_updater::*;
+pub use self::message_delegate::*;
 pub use self::send_message::*;
 
 pub enum Message {
