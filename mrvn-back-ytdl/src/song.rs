@@ -313,7 +313,14 @@ impl StreamingSource {
                     loop {
                         let mut received_this_request = 0;
                         for await bytes_maybe in response.bytes_stream() {
-                            let bytes = bytes_maybe.map_err(|err| std::io::Error::new(ErrorKind::Other, err))?;
+                            let bytes = match bytes_maybe {
+                                Ok(bytes) => bytes,
+                                Err(why) => {
+                                    log::warn!("Error while receiving data: {}", why);
+                                    break;
+                                }
+                            };
+
                             received_this_request += bytes.len() as u64;
 
                             yield bytes;
