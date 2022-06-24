@@ -52,7 +52,8 @@ pub struct Config {
     pub progress_min_update_secs: f64,
     pub progress_max_update_secs: f64,
 
-    pub buffer_kb: usize,
+    pub buffer_capacity_kb: usize,
+    pub buffer_watermark_kb: usize,
     pub search_prefix: String,
     pub host_blocklist: Vec<String>,
     pub ytdl: YtdlConfig,
@@ -119,7 +120,8 @@ impl Config {
             ytdl_args: &self.ytdl.args,
             ffmpeg_name: &self.ffmpeg.name,
             ffmpeg_args: &self.ffmpeg.args,
-            buffer_kb: self.buffer_kb,
+            buffer_capacity_kb: self.buffer_capacity_kb,
+            buffer_watermark_kb: self.buffer_watermark_kb,
         }
     }
 }

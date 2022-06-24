@@ -1,3 +1,4 @@
+use crate::copy_buffered::copy_watermark;
 use crate::Error;
 use async_stream::try_stream;
 use futures::future::{AbortHandle, Abortable};
@@ -7,7 +8,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{ErrorKind, SeekFrom};
 use std::process::{Child, Command, Stdio};
-use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use uuid::Uuid;
@@ -38,7 +39,8 @@ pub struct PlayConfig<'s> {
     pub ytdl_args: &'s [String],
     pub ffmpeg_name: &'s str,
     pub ffmpeg_args: &'s [String],
-    pub buffer_kb: usize,
+    pub buffer_capacity_kb: usize,
+    pub buffer_watermark_kb: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -263,7 +265,8 @@ impl StreamingSource {
         config: &PlayConfig<'_>,
         request_builder: reqwest::RequestBuilder,
     ) -> Result<Self, Error> {
-        let buffer_capacity_bytes = config.buffer_kb * 1024;
+        let buffer_capacity_bytes = config.buffer_capacity_kb * 1024;
+        let buffer_watermark_bytes = config.buffer_watermark_kb * 1024;
 
         let initial_response = request_builder
             .try_clone()
@@ -274,6 +277,15 @@ impl StreamingSource {
             .map_err(Error::Http)?;
 
         let content_length = initial_response.content_length();
+
+        // Reduce the buffer capacity if it's under the content length, to avoid allocating
+        // unnecessary memory.
+        let buffer_capacity_bytes = match content_length {
+            Some(content_length) => {
+                buffer_capacity_bytes.min((content_length as usize).next_power_of_two())
+            }
+            None => buffer_capacity_bytes,
+        };
 
         // Construct a writer for ffmpeg
         let mut ffmpeg = Command::new(config.ffmpeg_name)
@@ -339,11 +351,16 @@ impl StreamingSource {
                 };
                 pin_mut!(content_stream);
                 let content_read = content_stream.into_async_read();
-                let content_read = content_read.compat();
-                let mut buffered_read =
-                    BufReader::with_capacity(buffer_capacity_bytes, content_read);
+                let mut content_read = content_read.compat();
 
-                if let Err(why) = copy_buf(&mut buffered_read, &mut ffmpeg_in).await {
+                if let Err(why) = copy_watermark(
+                    &mut content_read,
+                    &mut ffmpeg_in,
+                    buffer_watermark_bytes,
+                    buffer_capacity_bytes,
+                )
+                .await
+                {
                     log::error!("Error while streaming data: {}", why);
                 }
             },

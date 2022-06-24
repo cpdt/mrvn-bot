@@ -1,4 +1,5 @@
 mod brain;
+mod copy_buffered;
 mod error;
 mod song;
 mod speaker;
