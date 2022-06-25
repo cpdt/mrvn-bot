@@ -1,38 +1,24 @@
+use crate::ring_buffer::{ring_buffer, Reader, Writer};
 use std::future::Future;
-use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum State {
-    Filling,
-    Copying,
-    ReadDone,
+struct CopyBufferedBuffer {
+    is_read_done: bool,
+    reader: Reader,
+    writer: Writer,
 }
 
-#[derive(Debug)]
-struct CopyWatermarkBuffer {
-    buf: Box<[MaybeUninit<u8>]>,
-    state: State,
-    is_full: bool,
-    pos: usize,
-    cap: usize,
-    init: usize,
-    watermark: usize,
-}
+impl CopyBufferedBuffer {
+    fn new(capacity: usize) -> Self {
+        let (reader, writer) = ring_buffer(capacity);
 
-impl CopyWatermarkBuffer {
-    fn new(watermark: usize, capacity: usize) -> Self {
-        CopyWatermarkBuffer {
-            buf: vec![MaybeUninit::uninit(); capacity].into_boxed_slice(),
-            state: State::Filling,
-            is_full: false,
-            pos: 0,
-            cap: 0,
-            init: 0,
-            watermark,
+        CopyBufferedBuffer {
+            is_read_done: false,
+            reader,
+            writer,
         }
     }
 
@@ -46,8 +32,6 @@ impl CopyWatermarkBuffer {
         R: AsyncRead + ?Sized,
         W: AsyncWrite + ?Sized,
     {
-        let mut is_first_iter = false;
-
         loop {
             let mut read_was_pending = false;
             let mut write_was_pending = false;
@@ -56,136 +40,36 @@ impl CopyWatermarkBuffer {
             let mut write_did_work = false;
 
             // Read some data into the next contiguous region if the reader hasn't ended
-            if !read_was_pending
-                && self.state != State::ReadDone
-                && !self.is_full
-                && self.pos <= self.cap
-            {
-                //                 V fill this region
-                // [...DDDDDDDDDDDD...........................................................]
-                //     ^-pos       ^-cap
+            if !self.is_read_done {
+                let write_buffer = self.writer.buffer();
 
-                let mut buf = ReadBuf::uninit(&mut self.buf[self.pos..]);
-                unsafe { buf.assume_init(self.init - self.pos) };
-                buf.set_filled(self.cap - self.pos);
+                if !write_buffer.is_empty() {
+                    read_did_work = true;
+                    let mut buf = ReadBuf::new(write_buffer);
 
-                match reader.as_mut().poll_read(cx, &mut buf) {
-                    Poll::Ready(Ok(_)) => {
-                        let initial_cap = self.cap;
-                        self.cap = buf.filled().len() + self.pos;
-                        self.init = buf.initialized().len() + self.pos;
+                    match reader.as_mut().poll_read(cx, &mut buf) {
+                        Poll::Ready(Ok(_)) => {
+                            let filled = buf.filled().len();
 
-                        debug_assert!(self.cap >= self.pos);
-                        debug_assert!(self.cap <= self.buf.len());
-
-                        if initial_cap == self.cap {
-                            self.state = State::ReadDone;
-                        } else if self.cap == self.buf.len() {
-                            self.is_full = self.pos == 0;
-                            self.cap = 0;
-                        }
-
-                        if self.state == State::Filling
-                            && (self.is_full || (self.pos == 0 && self.cap >= self.watermark))
-                        {
-                            self.state = State::Copying;
-                        }
-                    }
-                    Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                    Poll::Pending => read_was_pending = true,
-                }
-
-                read_did_work = true;
-            }
-
-            if !read_was_pending
-                && self.state != State::ReadDone
-                && !self.is_full
-                && self.pos > self.cap
-            {
-                //       V fill this region
-                // [DDDDD......................................DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD]
-                //       ^-cap                                 ^-pos
-
-                let mut buf = ReadBuf::uninit(&mut self.buf[..self.pos]);
-                unsafe { buf.assume_init(self.pos) };
-                buf.set_filled(self.cap);
-
-                match reader.as_mut().poll_read(cx, &mut buf) {
-                    Poll::Ready(Ok(_)) => {
-                        let initial_cap = self.cap;
-                        self.cap = buf.filled().len();
-
-                        debug_assert!(self.cap <= self.pos);
-
-                        if initial_cap == self.cap {
-                            self.state = State::ReadDone;
-                        } else if self.cap == self.pos {
-                            self.is_full = true;
-                        }
-                    }
-                    Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                    Poll::Pending => read_was_pending = true,
-                }
-
-                read_did_work = true;
-            }
-
-            // Write some data from the next contiguous region if if in a valid state
-            if self.state != State::Filling {
-                if is_first_iter
-                    && self.state != State::ReadDone
-                    && self.pos == self.cap
-                    && !self.is_full
-                {
-                    log::warn!("Ran out of buffered data, playback may stutter");
-                }
-
-                if !write_was_pending && self.pos > self.cap
-                    || (self.is_full && self.pos == self.cap)
-                {
-                    //                 V read this region
-                    // [DDD............DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD]
-                    //     ^-cap       ^-pos
-
-                    let mut buf = ReadBuf::uninit(&mut self.buf[self.pos..]);
-                    unsafe { buf.assume_init(self.init - self.pos) };
-
-                    match writer.as_mut().poll_write(cx, buf.initialized_mut()) {
-                        Poll::Ready(Ok(0)) => {
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::WriteZero,
-                                "write zero byte into writer",
-                            )));
-                        }
-                        Poll::Ready(Ok(read_bytes)) => {
-                            debug_assert!(read_bytes <= self.buf.len() - self.pos);
-
-                            self.is_full = false;
-                            self.pos += read_bytes;
-
-                            debug_assert!(self.pos <= self.buf.len());
-
-                            if self.pos == self.buf.len() {
-                                self.pos = 0;
+                            if filled == 0 {
+                                self.is_read_done = true;
+                            } else {
+                                self.writer.consume(filled);
                             }
                         }
                         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                        Poll::Pending => write_was_pending = true,
+                        Poll::Pending => read_was_pending = true,
                     }
-
-                    write_did_work = true;
                 }
+            }
 
-                if !write_was_pending && self.pos < self.cap {
-                    //     V read this region
-                    // [...DDDDDDDDDDDD...........................................................]
-                    //     ^-pos       ^-cap
+            // Write some data from the next contiguous region if possible
+            {
+                let read_buffer = self.reader.buffer();
 
-                    let mut buf = ReadBuf::uninit(&mut self.buf[self.pos..self.cap]);
-                    unsafe { buf.assume_init(self.cap - self.pos) };
-
-                    match writer.as_mut().poll_write(cx, buf.initialized_mut()) {
+                if !read_buffer.is_empty() {
+                    write_did_work = true;
+                    match writer.as_mut().poll_write(cx, read_buffer) {
                         Poll::Ready(Ok(0)) => {
                             return Poll::Ready(Err(io::Error::new(
                                 io::ErrorKind::WriteZero,
@@ -193,23 +77,14 @@ impl CopyWatermarkBuffer {
                             )));
                         }
                         Poll::Ready(Ok(read_bytes)) => {
-                            debug_assert!(read_bytes <= self.cap - self.pos);
-
-                            self.is_full = false;
-                            self.pos += read_bytes;
-
-                            debug_assert!(self.pos <= self.cap);
+                            self.reader.consume(read_bytes);
                         }
                         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                         Poll::Pending => write_was_pending = true,
                     }
-
-                    write_did_work = true;
-                }
-
-                // If we've seen EOF and all of the data has been written, flush out the data and
-                // finish the transfer.
-                if self.state == State::ReadDone && !self.is_full && self.pos == self.cap {
+                } else if self.is_read_done {
+                    // We've seen EOF and all of the data has been written - flush it out and finish
+                    // the transfer.
                     return match writer.as_mut().poll_flush(cx) {
                         Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
                         Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
@@ -219,24 +94,22 @@ impl CopyWatermarkBuffer {
             }
 
             debug_assert!(read_did_work || write_did_work);
+
             if (read_was_pending || !read_did_work) && (write_was_pending || !write_did_work) {
                 return Poll::Pending;
             }
-
-            is_first_iter = false;
         }
     }
 }
 
-#[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-struct CopyWatermark<'a, R: ?Sized, W: ?Sized> {
+struct CopyBuffered<'a, R: ?Sized, W: ?Sized> {
     reader: &'a mut R,
     writer: &'a mut W,
-    buf: CopyWatermarkBuffer,
+    buf: CopyBufferedBuffer,
 }
 
-impl<R, W> Future for CopyWatermark<'_, R, W>
+impl<R, W> Future for CopyBuffered<'_, R, W>
 where
     R: AsyncRead + Unpin + ?Sized,
     W: AsyncWrite + Unpin + ?Sized,
@@ -251,20 +124,19 @@ where
     }
 }
 
-pub async fn copy_watermark<'a, R, W>(
+pub async fn copy_buffered<'a, R, W>(
     reader: &'a mut R,
     writer: &'a mut W,
-    watermark: usize,
     capacity: usize,
 ) -> io::Result<()>
 where
     R: AsyncRead + Unpin + ?Sized,
     W: AsyncWrite + Unpin + ?Sized,
 {
-    CopyWatermark {
+    CopyBuffered {
         reader,
         writer,
-        buf: CopyWatermarkBuffer::new(watermark, capacity),
+        buf: CopyBufferedBuffer::new(capacity),
     }
     .await
 }

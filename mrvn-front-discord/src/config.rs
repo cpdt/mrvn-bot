@@ -53,7 +53,6 @@ pub struct Config {
     pub progress_max_update_secs: f64,
 
     pub buffer_capacity_kb: usize,
-    pub buffer_watermark_kb: usize,
     pub search_prefix: String,
     pub host_blocklist: Vec<String>,
     pub ytdl: YtdlConfig,
@@ -121,7 +120,6 @@ impl Config {
             ffmpeg_name: &self.ffmpeg.name,
             ffmpeg_args: &self.ffmpeg.args,
             buffer_capacity_kb: self.buffer_capacity_kb,
-            buffer_watermark_kb: self.buffer_watermark_kb,
         }
     }
 }

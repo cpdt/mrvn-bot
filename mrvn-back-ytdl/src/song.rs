@@ -1,16 +1,16 @@
-use crate::copy_buffered::copy_watermark;
-use crate::Error;
-use async_stream::try_stream;
+use crate::copy_buffered::copy_buffered;
+use crate::input::{remote_file_stream, remote_hls_stream};
+use crate::{Error, HTTP_CLIENT};
 use futures::future::{AbortHandle, Abortable};
-use futures::{pin_mut, TryStreamExt};
+use futures::pin_mut;
 use serenity::model::prelude::UserId;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{ErrorKind, SeekFrom};
+use std::io::SeekFrom;
 use std::process::{Child, Command, Stdio};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
-use tokio_util::compat::FuturesAsyncReadCompatExt;
+use tokio_util::io::StreamReader;
 use uuid::Uuid;
 
 const DEFAULT_FFMPEG_ARGS: &[&str] = &[
@@ -40,7 +40,6 @@ pub struct PlayConfig<'s> {
     pub ffmpeg_name: &'s str,
     pub ffmpeg_args: &'s [String],
     pub buffer_capacity_kb: usize,
-    pub buffer_watermark_kb: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -189,33 +188,8 @@ impl Song {
         &self,
         config: &PlayConfig<'_>,
     ) -> Result<songbird::input::Input, Error> {
-        // If this is a livestream, directly call FFMPEG instead of doing the download step ourself
         let parsed_download_url =
             url::Url::parse(&self.download_url).map_err(|_| Error::UnsupportedUrl)?;
-        if parsed_download_url.path().ends_with(".m3u8") {
-            let http_headers: String = self
-                .http_headers
-                .iter()
-                .map(|(key, value)| format!("{}: {}\r\n", key, value))
-                .collect();
-
-            let ffmpeg = Command::new(config.ffmpeg_name)
-                .args(config.ffmpeg_args)
-                .args(&["-headers", &http_headers, "-i", &self.download_url])
-                .args(DEFAULT_FFMPEG_ARGS)
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .stdout(Stdio::piped())
-                .spawn()
-                .map_err(Error::Io)?;
-            return Ok(songbird::input::Input::new(
-                true,
-                vec![ffmpeg].into(),
-                songbird::input::Codec::FloatPcm,
-                songbird::input::Container::Raw,
-                None,
-            ));
-        }
 
         // Start streaming data from the remote
         let mut headers = reqwest::header::HeaderMap::new();
@@ -226,12 +200,8 @@ impl Song {
             );
         }
 
-        lazy_static::lazy_static! {
-            static ref HTTP_CLIENT: reqwest::Client = reqwest::Client::builder().build().unwrap();
-        }
-
         let request_builder = HTTP_CLIENT.get(&self.download_url).headers(headers);
-        let source = StreamingSource::new(config, request_builder).await?;
+        let source = StreamingSource::new(config, parsed_download_url, request_builder).await?;
 
         Ok(songbird::input::Input::new(
             true,
@@ -263,10 +233,10 @@ struct StreamingSource {
 impl StreamingSource {
     pub async fn new(
         config: &PlayConfig<'_>,
+        request_url: url::Url,
         request_builder: reqwest::RequestBuilder,
     ) -> Result<Self, Error> {
         let buffer_capacity_bytes = config.buffer_capacity_kb * 1024;
-        let buffer_watermark_bytes = config.buffer_watermark_kb * 1024;
 
         let initial_response = request_builder
             .try_clone()
@@ -277,6 +247,16 @@ impl StreamingSource {
             .map_err(Error::Http)?;
 
         let content_length = initial_response.content_length();
+
+        let is_hls_stream = request_url.path().ends_with(".m3u8")
+            || request_url.path().ends_with(".m3u")
+            || initial_response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .map(|header| {
+                    header == "application/vnd.apple.mpegurl" || header == "audio/mpegurl"
+                })
+                .unwrap_or(false);
 
         // Reduce the buffer capacity if it's under the content length, to avoid allocating
         // unnecessary memory.
@@ -301,73 +281,25 @@ impl StreamingSource {
         let mut ffmpeg_in = tokio::process::ChildStdin::from_std(ffmpeg.stdin.take().unwrap())
             .map_err(Error::Io)?;
 
-        // Copy the incoming data to ffmpeg
         let (abort_download, abort_registration) = AbortHandle::new_pair();
         tokio::spawn(Abortable::new(
             async move {
-                // Construct a reader from that request and any necessary continuing requests
-                let content_stream = try_stream! {
-                    let mut response = initial_response;
-                    let mut received_bytes = 0;
-
-                    loop {
-                        let mut received_this_request = 0;
-                        for await bytes_maybe in response.bytes_stream() {
-                            let bytes = match bytes_maybe {
-                                Ok(bytes) => bytes,
-                                Err(why) => {
-                                    log::warn!("Error while receiving data: {}", why);
-                                    break;
-                                }
-                            };
-
-                            received_this_request += bytes.len() as u64;
-
-                            yield bytes;
-                        }
-                        received_bytes += received_this_request;
-
-                        // Some remotes close the request after a certain timeout. To avoid just ending
-                        // playback when this happens, under certain circumstances we can restart the
-                        // request with a Range header set.
-                        // We only keep requesting if:
-                        //  - The initial request had a Content-Length header set, so we know when to stop.
-                        //  - We haven't received the amount of data we were meant to get.
-                        //  - We did not receive an empty response in this request. This ensures we don't
-                        //    get into an infinite request loop.
-                        let content_length = match content_length {
-                            Some(length) => length,
-                            None => break,
-                        };
-                        if received_bytes >= content_length || received_this_request == 0 {
-                            break;
-                        }
-
-                        response = request_builder
-                            .try_clone()
-                            .unwrap()
-                            .header(
-                                reqwest::header::RANGE,
-                                format!("bytes={}-{}", received_bytes, content_length),
-                            )
-                            .send()
-                            .await
-                            .and_then(reqwest::Response::error_for_status)
-                            .map_err(|err| std::io::Error::new(ErrorKind::Other, err))?;
-                    }
+                // Start streaming data from the remote and copying it to FFMPEG.
+                // HLS URLs (i.e HTTP livestreams) can't be streamed just by downloading a file, so
+                // they use a separate implementation.
+                let maybe_err = if is_hls_stream {
+                    let reader =
+                        StreamReader::new(remote_hls_stream(initial_response, request_builder));
+                    pin_mut!(reader);
+                    copy_buffered(&mut reader, &mut ffmpeg_in, buffer_capacity_bytes).await
+                } else {
+                    let reader =
+                        StreamReader::new(remote_file_stream(initial_response, request_builder));
+                    pin_mut!(reader);
+                    copy_buffered(&mut reader, &mut ffmpeg_in, buffer_capacity_bytes).await
                 };
-                pin_mut!(content_stream);
-                let content_read = content_stream.into_async_read();
-                let mut content_read = content_read.compat();
 
-                if let Err(why) = copy_watermark(
-                    &mut content_read,
-                    &mut ffmpeg_in,
-                    buffer_watermark_bytes,
-                    buffer_capacity_bytes,
-                )
-                .await
-                {
+                if let Err(why) = maybe_err {
                     log::error!("Error while streaming data: {}", why);
                 }
             },

@@ -7,7 +7,6 @@ edition = "2021"
 chrono-tz = "0.6"
 mrvn-model = { path = "../mrvn-model" }
 mrvn-back-ytdl = { path = "../mrvn-back-ytdl" }
-dotenv = "0.15"
 futures = "0.3"
 lazy_static = "1.4"
 log = "0.4"
