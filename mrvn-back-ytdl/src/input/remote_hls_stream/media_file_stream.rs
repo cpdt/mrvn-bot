@@ -60,7 +60,10 @@ pub fn media_file_stream(
                 .bytes_stream()
                 .filter_map(|maybe_chunk| async move {
                     match maybe_chunk {
-                        Ok(chunk) => Some(Ok(chunk)),
+                        Ok(chunk) => {
+                            log::trace!("Emitting {} byte chunk", chunk.len());
+                            Some(Ok(chunk))
+                        }
                         Err(why) => {
                             log::warn!("Error while streaming playlist segment: {}", why);
                             None

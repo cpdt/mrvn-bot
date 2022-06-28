@@ -1,9 +1,12 @@
 mod brain;
 mod copy_buffered;
+mod decode;
 mod error;
 mod input;
 mod ring_buffer;
+mod ring_buffer_io;
 mod song;
+mod source;
 mod speaker;
 
 pub use self::brain::*;

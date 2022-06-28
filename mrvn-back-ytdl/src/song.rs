@@ -1,16 +1,33 @@
 use crate::copy_buffered::copy_buffered;
+use crate::decode::decode;
 use crate::input::{remote_file_stream, remote_hls_stream};
+use crate::ring_buffer_io::{ring_buffer_io, ReaderIo};
+use crate::source::{DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
+use futures::channel::mpsc::channel;
 use futures::future::{AbortHandle, Abortable};
-use futures::pin_mut;
+use futures::stream::StreamExt;
+use futures::{pin_mut, AsyncRead, SinkExt};
 use serenity::model::prelude::UserId;
+use songbird::constants::SAMPLE_RATE_RAW;
+use songbird::input::codec::OpusDecoderState;
+use songbird::input::{Codec, Container, Input, Metadata, Reader};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::SeekFrom;
+use std::io::{Read, SeekFrom};
 use std::process::{Child, Command, Stdio};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use std::time::Duration;
+use symphonia::core::audio::Layout;
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
+use symphonia::core::formats::{FormatOptions, FormatReader, Packet};
+use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions, ReadOnlySource};
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+use symphonia::core::units::TimeStamp;
+use tokio::io;
+use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
-use tokio_util::io::StreamReader;
+use tokio_util::io::{StreamReader, SyncIoBridge};
 use uuid::Uuid;
 
 const DEFAULT_FFMPEG_ARGS: &[&str] = &[
@@ -201,15 +218,7 @@ impl Song {
         }
 
         let request_builder = HTTP_CLIENT.get(&self.download_url).headers(headers);
-        let source = StreamingSource::new(config, parsed_download_url, request_builder).await?;
-
-        Ok(songbird::input::Input::new(
-            true,
-            songbird::input::Reader::Extension(Box::new(source)),
-            songbird::input::Codec::FloatPcm,
-            songbird::input::Container::Raw,
-            None,
-        ))
+        create_source(config, parsed_download_url, request_builder).await
     }
 }
 
@@ -223,126 +232,199 @@ pub struct SongMetadata {
     pub user_id: UserId,
 }
 
-struct StreamingSource {
-    content_length: Option<u64>,
-    abort_download: AbortHandle,
-    ffmpeg: Child,
-    ffmpeg_out: std::process::ChildStdout,
-}
+async fn create_source(
+    config: &PlayConfig<'_>,
+    request_url: url::Url,
+    request_builder: reqwest::RequestBuilder,
+) -> Result<songbird::input::Input, Error> {
+    let buffer_capacity_bytes = config.buffer_capacity_kb * 1024;
 
-impl StreamingSource {
-    pub async fn new(
-        config: &PlayConfig<'_>,
-        request_url: url::Url,
-        request_builder: reqwest::RequestBuilder,
-    ) -> Result<Self, Error> {
-        let buffer_capacity_bytes = config.buffer_capacity_kb * 1024;
+    let initial_response = request_builder
+        .try_clone()
+        .unwrap()
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(Error::Http)?;
 
-        let initial_response = request_builder
-            .try_clone()
-            .unwrap()
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(Error::Http)?;
+    let content_length = initial_response.content_length();
 
-        let content_length = initial_response.content_length();
+    let maybe_extension = request_url
+        .path_segments()
+        .and_then(|segments| segments.last())
+        .and_then(|segment| segment.rfind('.').map(|idx| (segment, idx)))
+        .map(|(segment, idx)| &segment[(idx + 1)..]);
 
-        let is_hls_stream = request_url.path().ends_with(".m3u8")
-            || request_url.path().ends_with(".m3u")
-            || initial_response
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .map(|header| {
-                    header == "application/vnd.apple.mpegurl" || header == "audio/mpegurl"
-                })
-                .unwrap_or(false);
+    let maybe_mime_type = initial_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|val| val.to_str().ok());
 
-        // Reduce the buffer capacity if it's under the content length, to avoid allocating
-        // unnecessary memory.
-        let buffer_capacity_bytes = match content_length {
-            Some(content_length) => {
-                buffer_capacity_bytes.min((content_length as usize).next_power_of_two())
+    let is_mpeg_stream = maybe_extension == Some("m3u8")
+        || maybe_extension == Some("m3u")
+        || maybe_mime_type == Some("application/vnd.apple.mpegurl")
+        || maybe_mime_type == Some("audio/mpegurl");
+
+    let mut hint = Hint::new();
+    maybe_extension.map(|extension| hint.with_extension(extension));
+    maybe_mime_type.map(|mime_type| hint.mime_type(mime_type));
+
+    // Reduce the buffer capacity if it's under the content length, to avoid allocating
+    // unnecessary memory.
+    let buffer_capacity_bytes = match content_length {
+        Some(content_length) => {
+            buffer_capacity_bytes.min((content_length as usize).next_power_of_two())
+        }
+        None => buffer_capacity_bytes,
+    };
+
+    // Start streaming chunks from the remote
+    let (_abort_stream, abort_registration) = AbortHandle::new_pair();
+    //let (mut chunk_sender, chunk_receiver) = channel(1);
+    let (ring_reader, mut ring_writer) = ring_buffer_io(buffer_capacity_bytes);
+    tokio::spawn(Abortable::new(
+        async move {
+            if is_mpeg_stream {
+                let stream = remote_hls_stream(initial_response, request_builder);
+                let mut reader = StreamReader::new(stream);
+                pin_mut!(reader);
+
+                copy_buf(&mut reader, &mut ring_writer).await;
+
+                /*let ok_stream = stream.map(Ok);
+                pin_mut!(ok_stream);
+
+                let _ = chunk_sender.send_all(&mut ok_stream).await;*/
+            } else {
+                let stream = remote_file_stream(initial_response, request_builder);
+                let mut reader = StreamReader::new(stream);
+                pin_mut!(reader);
+
+                copy_buf(&mut reader, &mut ring_writer).await;
+
+                /*let ok_stream = stream.map(Ok);
+                pin_mut!(ok_stream);
+
+                let _ = chunk_sender.send_all(&mut ok_stream).await;*/
             }
-            None => buffer_capacity_bytes,
-        };
+        },
+        abort_registration,
+    ));
 
-        // Construct a writer for ffmpeg
-        let mut ffmpeg = Command::new(config.ffmpeg_name)
-            .args(config.ffmpeg_args)
-            .args(&["-i", "-"])
-            .args(DEFAULT_FFMPEG_ARGS)
-            .stdin(Stdio::piped())
-            .stderr(Stdio::null())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(Error::Io)?;
+    // let async_reader = StreamReader::new(chunk_receiver);
+    let sync_reader = SyncIoBridge::new(ring_reader);
 
-        let mut ffmpeg_in = tokio::process::ChildStdin::from_std(ffmpeg.stdin.take().unwrap())
-            .map_err(Error::Io)?;
-
-        let (abort_download, abort_registration) = AbortHandle::new_pair();
-        tokio::spawn(Abortable::new(
-            async move {
-                // Start streaming data from the remote and copying it to FFMPEG.
-                // HLS URLs (i.e HTTP livestreams) can't be streamed just by downloading a file, so
-                // they use a separate implementation.
-                let maybe_err = if is_hls_stream {
-                    let reader =
-                        StreamReader::new(remote_hls_stream(initial_response, request_builder));
-                    pin_mut!(reader);
-                    copy_buffered(&mut reader, &mut ffmpeg_in, buffer_capacity_bytes).await
-                } else {
-                    let reader =
-                        StreamReader::new(remote_file_stream(initial_response, request_builder));
-                    pin_mut!(reader);
-                    copy_buffered(&mut reader, &mut ffmpeg_in, buffer_capacity_bytes).await
-                };
-
-                if let Err(why) = maybe_err {
-                    log::error!("Error while streaming data: {}", why);
-                }
-            },
-            abort_registration,
-        ));
-
-        let ffmpeg_out = ffmpeg.stdout.take().unwrap();
-        Ok(StreamingSource {
-            content_length,
-            abort_download,
-            ffmpeg,
-            ffmpeg_out,
-        })
+    // Symphonia does not detect MPEG-TS streams, so we must use a separate branch if we are hinted
+    // to have one of those.
+    if is_mpeg_stream {
+        create_mpeg_stream_source().await
+    } else {
+        create_file_source(sync_reader, hint).await
     }
 }
 
-impl Drop for StreamingSource {
-    fn drop(&mut self) {
-        self.abort_download.abort();
-        if let Err(why) = self.ffmpeg.kill() {
-            log::error!("Error stopping transcoder: {}", why);
+async fn create_mpeg_stream_source() -> Result<songbird::input::Input, Error> {
+    todo!()
+}
+
+async fn create_file_source(
+    reader: impl Read + Sync + Send + 'static,
+    hint: Hint,
+) -> Result<Input, Error> {
+    let maybe_probe_result = tokio::task::spawn_blocking(move || {
+        let source = ReadOnlySource::new(reader);
+        let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
+
+        symphonia::default::get_probe().format(
+            &hint,
+            stream,
+            &FormatOptions {
+                enable_gapless: true,
+
+                ..Default::default()
+            },
+            &MetadataOptions::default(),
+        )
+    })
+    .await;
+
+    // spawn_blocking returns Err if the inner function panics, propagate this to our thread
+    let maybe_probe_result = maybe_probe_result.unwrap();
+
+    let probe_result = maybe_probe_result.map_err(Error::Symphonia)?;
+    let format = probe_result.format;
+
+    // Look for any tracks that can be passed through. This allows us to skip re-encoding if the
+    // stream is in the format Discord expects.
+    // The data must be Opus encoded with a 48kHz sample rate and 20ms long frames.
+    // todo: how can we check frame length?
+    for track in format.tracks() {
+        let track_id = track.id;
+
+        // Assume the track is stereo if it's not mono. This might break for tracks with more channels.
+        let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
+
+        let can_pass_through = track.codec_params.codec == CODEC_TYPE_OPUS
+            && track.codec_params.sample_rate == Some(SAMPLE_RATE_RAW as u32);
+
+        if can_pass_through {
+            let metadata = Metadata {
+                channels: track
+                    .codec_params
+                    .channels
+                    .map(|channels| channels.count() as u8),
+                sample_rate: track.codec_params.sample_rate,
+
+                ..Default::default()
+            };
+
+            let source = OpusPassthroughSource::new(format, track_id);
+
+            return Ok(Input::new(
+                is_stereo,
+                Reader::Extension(Box::new(source)),
+                Codec::Opus(OpusDecoderState::new().unwrap()),
+                Container::Dca { first_frame: 0 },
+                Some(metadata),
+            ));
         }
     }
-}
 
-impl songbird::input::reader::MediaSource for StreamingSource {
-    fn is_seekable(&self) -> bool {
-        false
-    }
+    // If we are here, we will need to pick a track and decode it to PCM.
+    let track = format
+        .tracks()
+        .iter()
+        .find(|track| track.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or(Error::NoTracks)?;
 
-    fn len(&self) -> Option<u64> {
-        self.content_length
-    }
-}
+    let track_id = track.id;
 
-impl std::io::Read for StreamingSource {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.ffmpeg_out.read(buf)
-    }
-}
+    // Assume the track is stereo if it's not mono.
+    let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
 
-impl std::io::Seek for StreamingSource {
-    fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
-        panic!("Attempting to seek on non-seekable streaming source");
-    }
+    let metadata = Metadata {
+        channels: track
+            .codec_params
+            .channels
+            .map(|channels| channels.count() as u8),
+        sample_rate: track.codec_params.sample_rate,
+
+        ..Default::default()
+    };
+
+    log::trace!("metadata = {:#?}", metadata);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(Error::Symphonia)?;
+
+    let source = DecodedPcmSource::new(format, decoder, track_id, is_stereo)?;
+
+    return Ok(Input::new(
+        is_stereo,
+        Reader::Extension(Box::new(source)),
+        Codec::FloatPcm,
+        Container::Raw,
+        Some(metadata),
+    ));
 }

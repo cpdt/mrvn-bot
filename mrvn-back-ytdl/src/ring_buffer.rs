@@ -20,7 +20,10 @@ pub struct Writer {
 }
 
 unsafe impl Send for Reader {}
+unsafe impl Sync for Reader {}
+
 unsafe impl Send for Writer {}
+unsafe impl Sync for Writer {}
 
 pub fn ring_buffer(reserved: usize) -> (Reader, Writer) {
     let buffer = Arc::new(RingBuffer {
