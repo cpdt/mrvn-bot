@@ -1,47 +1,31 @@
-use crate::copy_buffered::copy_buffered;
-use crate::decode::decode;
+use crate::formats::MpegTsReader;
 use crate::input::{remote_file_stream, remote_hls_stream};
-use crate::ring_buffer_io::{ring_buffer_io, ReaderIo};
+use crate::ring_buffer_io::ring_buffer_io;
 use crate::source::{DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
-use futures::channel::mpsc::channel;
 use futures::future::{AbortHandle, Abortable};
-use futures::stream::StreamExt;
-use futures::{pin_mut, AsyncRead, SinkExt};
+use futures::pin_mut;
 use serenity::model::prelude::UserId;
 use songbird::constants::SAMPLE_RATE_RAW;
 use songbird::input::codec::OpusDecoderState;
 use songbird::input::{Codec, Container, Input, Metadata, Reader};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{Read, SeekFrom};
-use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::io::Read;
+use std::process::Stdio;
 use symphonia::core::audio::Layout;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
-use symphonia::core::formats::{FormatOptions, FormatReader, Packet};
+use symphonia::core::codecs::{
+    Decoder, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_NULL, CODEC_TYPE_OPUS,
+};
+use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-use symphonia::core::units::TimeStamp;
-use tokio::io;
+use symphonia::default::codecs::AacDecoder;
 use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio_util::io::{StreamReader, SyncIoBridge};
 use uuid::Uuid;
-
-const DEFAULT_FFMPEG_ARGS: &[&str] = &[
-    "-vn",
-    "-f",
-    "s16le",
-    "-ac",
-    "2",
-    "-ar",
-    "48000",
-    "-acodec",
-    "pcm_f32le",
-    "-",
-];
 
 pub struct Song {
     pub metadata: SongMetadata,
@@ -54,8 +38,6 @@ pub struct PlayConfig<'s> {
     pub host_blocklist: &'s [String],
     pub ytdl_name: &'s str,
     pub ytdl_args: &'s [String],
-    pub ffmpeg_name: &'s str,
-    pub ffmpeg_args: &'s [String],
     pub buffer_capacity_kb: usize,
 }
 
@@ -280,51 +262,91 @@ async fn create_source(
 
     // Start streaming chunks from the remote
     let (_abort_stream, abort_registration) = AbortHandle::new_pair();
-    //let (mut chunk_sender, chunk_receiver) = channel(1);
     let (ring_reader, mut ring_writer) = ring_buffer_io(buffer_capacity_bytes);
     tokio::spawn(Abortable::new(
         async move {
-            if is_mpeg_stream {
+            let maybe_err = if is_mpeg_stream {
                 let stream = remote_hls_stream(initial_response, request_builder);
-                let mut reader = StreamReader::new(stream);
+                let reader = StreamReader::new(stream);
                 pin_mut!(reader);
 
-                copy_buf(&mut reader, &mut ring_writer).await;
-
-                /*let ok_stream = stream.map(Ok);
-                pin_mut!(ok_stream);
-
-                let _ = chunk_sender.send_all(&mut ok_stream).await;*/
+                copy_buf(&mut reader, &mut ring_writer).await
             } else {
                 let stream = remote_file_stream(initial_response, request_builder);
-                let mut reader = StreamReader::new(stream);
+                let reader = StreamReader::new(stream);
                 pin_mut!(reader);
 
-                copy_buf(&mut reader, &mut ring_writer).await;
+                copy_buf(&mut reader, &mut ring_writer).await
+            };
 
-                /*let ok_stream = stream.map(Ok);
-                pin_mut!(ok_stream);
-
-                let _ = chunk_sender.send_all(&mut ok_stream).await;*/
+            if let Err(why) = maybe_err {
+                log::warn!("Error while streaming data: {}", why);
             }
         },
         abort_registration,
     ));
 
-    // let async_reader = StreamReader::new(chunk_receiver);
     let sync_reader = SyncIoBridge::new(ring_reader);
 
     // Symphonia does not detect MPEG-TS streams, so we must use a separate branch if we are hinted
     // to have one of those.
     if is_mpeg_stream {
-        create_mpeg_stream_source().await
+        create_mpeg_stream_source(sync_reader).await
     } else {
         create_file_source(sync_reader, hint).await
     }
 }
 
-async fn create_mpeg_stream_source() -> Result<songbird::input::Input, Error> {
-    todo!()
+async fn create_mpeg_stream_source(
+    reader: impl Read + Sync + Send + 'static,
+) -> Result<songbird::input::Input, Error> {
+    let maybe_format = tokio::task::spawn_blocking(move || {
+        let source = ReadOnlySource::new(reader);
+        let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
+
+        MpegTsReader::try_new(stream, &FormatOptions::default())
+    })
+    .await;
+
+    // spawn_blocking returns Err if the inner function panics, propagate this to our thread
+    let maybe_format = maybe_format.unwrap();
+
+    let format = maybe_format.map_err(Error::Symphonia)?;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|track| track.codec_params.codec == CODEC_TYPE_AAC)
+        .ok_or(Error::NoTracks)?;
+
+    let track_id = track.id;
+
+    // Assume the track is stereo if it's not mono. DecodedPcmSource will strip any extra channels.
+    let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
+
+    let metadata = Metadata {
+        channels: track
+            .codec_params
+            .channels
+            .map(|channels| channels.count() as u8),
+        sample_rate: track.codec_params.sample_rate,
+
+        ..Default::default()
+    };
+
+    log::trace!("metadata = {:#?}", metadata);
+
+    let decoder = AacDecoder::try_new(&track.codec_params, &DecoderOptions::default())
+        .map_err(Error::Symphonia)?;
+
+    let source = DecodedPcmSource::new(Box::new(format), Box::new(decoder), track_id, is_stereo)?;
+
+    Ok(Input::new(
+        is_stereo,
+        Reader::Extension(Box::new(source)),
+        Codec::FloatPcm,
+        Container::Raw,
+        Some(metadata),
+    ))
 }
 
 async fn create_file_source(
@@ -399,7 +421,7 @@ async fn create_file_source(
 
     let track_id = track.id;
 
-    // Assume the track is stereo if it's not mono.
+    // Assume the track is stereo if it's not mono. DecodedPcmSource will strip any extra channels.
     let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
 
     let metadata = Metadata {
@@ -414,17 +436,17 @@ async fn create_file_source(
 
     log::trace!("metadata = {:#?}", metadata);
 
-    let mut decoder = symphonia::default::get_codecs()
+    let decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(Error::Symphonia)?;
 
     let source = DecodedPcmSource::new(format, decoder, track_id, is_stereo)?;
 
-    return Ok(Input::new(
+    Ok(Input::new(
         is_stereo,
         Reader::Extension(Box::new(source)),
         Codec::FloatPcm,
         Container::Raw,
         Some(metadata),
-    ));
+    ))
 }

@@ -1,7 +1,6 @@
 mod brain;
-mod copy_buffered;
-mod decode;
 mod error;
+mod formats;
 mod input;
 mod ring_buffer;
 mod ring_buffer_io;

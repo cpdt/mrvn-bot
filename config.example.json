@@ -9,16 +9,12 @@
   "only_disconnect_when_alone": true,
   "progress_min_update_secs": 1,
   "progress_max_update_secs": 15,
-  "buffer_capacity_kb": 32,
+  "buffer_capacity_kb": 8,
   "search_prefix": "ytsearch1",
   "host_blocklist": [],
   "ytdl": {
     "name": "youtube-dl",
     "args": ["-f", "webm[abr>0]/bestaudio/best", "-R", "infinite"]
-  },
-  "ffmpeg": {
-    "name": "ffmpeg",
-    "args": []
   },
   "command_bot": {
     "token": "Place a bot token here.",

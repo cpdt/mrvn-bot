@@ -3,9 +3,9 @@ use rubato::{FftFixedInOut, Resampler};
 use songbird::constants::SAMPLE_RATE_RAW;
 use songbird::input::reader::MediaSource;
 use std::io;
-use std::io::{Bytes, Chain, IoSliceMut, Read, Seek, SeekFrom, Take};
+use std::io::{Read, Seek, SeekFrom};
 use std::mem::size_of;
-use symphonia::core::audio::{AudioBuffer, AudioBufferRef, SampleBuffer, Signal};
+use symphonia::core::audio::{AudioBuffer, AudioBufferRef, Signal};
 use symphonia::core::codecs::Decoder;
 use symphonia::core::conv::IntoSample;
 use symphonia::core::formats::{FormatReader, Packet};
@@ -98,7 +98,8 @@ impl DecodedPcmSource {
         // Hol' up, gotta process
         self.interleaved_len = self.resample.output_frames_next() * self.resample.nbr_channels();
         self.resample
-            .process_into_buffer(&self.not_resampled, &mut self.resampled, None);
+            .process_into_buffer(&self.not_resampled, &mut self.resampled, None)
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
         // Get our interleaved buffer ready
         copy_interleaved(&self.resampled, &mut self.interleaved, self.interleaved_len);
@@ -136,7 +137,7 @@ impl Read for DecodedPcmSource {
         self.interleaved_byte_offset += copy_len;
         debug_assert!(self.interleaved_byte_offset <= interleaved_byte_len);
 
-        Ok((copy_len))
+        Ok(copy_len)
     }
 }
 
@@ -225,7 +226,7 @@ fn copy_buffer<S: Sample + IntoSample<f32>>(
 ) {
     let chan_buf = &src_buf.chan(channel)[src_offset..];
 
-    for (&src_sample, dest_sample) in chan_buf.into_iter().zip(dest.into_iter()) {
+    for (&src_sample, dest_sample) in chan_buf.iter().zip(dest.iter_mut()) {
         *dest_sample = src_sample.into_sample();
     }
 }

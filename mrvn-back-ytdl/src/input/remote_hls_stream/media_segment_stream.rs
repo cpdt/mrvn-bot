@@ -32,10 +32,10 @@ pub fn segment_stream(
             let media_playlist = parse_media_playlist_res(&response_bytes)
                 .map_err(|_| io::Error::new(io::ErrorKind::Other, MediaPlaylistParseError))?;
 
-            let playlist_duration = Duration::from_secs_f32(media_playlist.segments
-                .iter()
-                .map(|segment| segment.duration)
-                .sum());
+            let playlist_duration_secs: f32 = media_playlist.segments
+                 .iter()
+                 .map(|segment| segment.duration)
+                 .sum();
 
             let media_sequence = media_playlist.media_sequence;
             let sequenced_segments = media_playlist.segments
@@ -44,14 +44,14 @@ pub fn segment_stream(
                 .map(|(segment_index, segment)| (media_sequence + segment_index as u64, segment));
 
             // Filter segments that start less than three target durations from the end of the file
-            let min_start = playlist_duration - Duration::from_secs_f32(media_playlist.target_duration * 3.);
+            let min_start_secs = playlist_duration_secs - media_playlist.target_duration * 3.;
             let filtered_segments = sequenced_segments
-                .scan(Duration::default(), |start_time, (segment_sequence, segment)| {
+                .scan(0., |start_time, (segment_sequence, segment)| {
                     let this_start_time = *start_time;
-                    *start_time += Duration::from_secs_f32(segment.duration);
+                    *start_time += segment.duration;
                     Some((segment_sequence, segment, this_start_time))
                 })
-                .filter(|(_, _, start_time)| *start_time < min_start);
+                .filter(|(_, _, start_time)| *start_time < min_start_secs);
 
             // Filter segments that we've already seen
             let mut filtered_segments = filtered_segments
@@ -80,13 +80,13 @@ pub fn segment_stream(
                     yield first_segment;
                     last_seen_sequence = Some(first_segment_sequence);
 
-                    for (segment_sequence, segment, segment_start_time) in filtered_segments {
+                    for (segment_sequence, segment, segment_start_secs) in filtered_segments {
                         // Due to the yield points, there could have been any amount of time since
                         // the previous segment was emitted and this segment is about to be, e.g.
                         // if playback is paused.
                         // To avoid wasted work down the line, skip this and remaining segments
                         // if we can be certain they will have expired.
-                        let segment_expiry_time = request_instant + segment_start_time + playlist_duration;
+                        let segment_expiry_time = request_instant + Duration::from_secs_f32(segment_start_secs + playlist_duration_secs);
                         if Instant::now() > segment_expiry_time {
                             break;
                         }
@@ -117,6 +117,7 @@ pub fn segment_stream(
             }
 
             // Refresh the data again and continue
+            log::trace!("Fetching segment list");
             request_instant = Instant::now();
             response = request_builder
                 .try_clone()

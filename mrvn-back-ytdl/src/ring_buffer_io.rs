@@ -1,14 +1,11 @@
 use crate::ring_buffer::{ring_buffer, Reader, Writer};
-use futures::channel::mpsc::{channel, Receiver, Sender};
 use pin_project_lite::pin_project;
 use std::io::Error;
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::futures::Notified;
 
 #[must_use]
 #[repr(transparent)]
@@ -58,18 +55,6 @@ pub fn ring_buffer_io(reserved: usize) -> (ReaderIo, WriterIo) {
     (reader_io, writer_io)
 }
 
-impl ReaderIo {
-    pub fn buffer(&self) -> &[u8] {
-        self.reader.buffer()
-    }
-}
-
-impl WriterIo {
-    pub fn buffer(&mut self) -> &mut [u8] {
-        self.writer.buffer()
-    }
-}
-
 impl WakeOnDrop {
     fn wake(mut self) {
         if let Some(waker) = self.take() {
@@ -107,8 +92,6 @@ impl AsyncRead for ReaderIo {
         unfilled[..take_len].copy_from_slice(&src_buf[..take_len]);
         buf.advance(take_len);
 
-        log::trace!("Read {}/{}", take_len, src_buf.len());
-
         self.as_mut().consume(take_len);
 
         Poll::Ready(Ok(()))
@@ -133,8 +116,6 @@ impl AsyncBufRead for ReaderIo {
 
             let available_data = me.reader.buffer();
             if available_data.is_empty() {
-                log::trace!("No data to read, waiting for writer...");
-
                 // Tell the writer to wake us when data becomes available.
                 *data_available_waker = WakeOnDrop(Some(cx.waker().clone()));
 
@@ -187,8 +168,6 @@ impl AsyncWrite for WriterIo {
 
             let available_space = me.writer.buffer();
             if available_space.is_empty() {
-                log::trace!("No space to write, waiting for reader...");
-
                 // Tell the reader to wake us when data becomes available.
                 *space_available_waker = WakeOnDrop(Some(cx.waker().clone()));
 
@@ -223,12 +202,12 @@ impl AsyncWrite for WriterIo {
         Poll::Ready(Ok(take_len))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        let mut me = self.project();
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        let me = self.project();
 
         let data_available_waker = {
             let data_available_waker_mutex =

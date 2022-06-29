@@ -21,8 +21,8 @@ pub fn media_file_stream(
 ) -> impl Stream<Item = io::Result<Bytes>> {
     // This looks like a mess, but roughly we're:
     //  1. Building a request for each incoming segment and sending it.
-    //  2. Buffering one request at a time, so we can initiate the next request while the current
-    //     one is streaming.
+    //  2. Buffering several requests at a time, so we can initiate many of the requests for a
+    //     segment at the same time.
     //  3. Ignore requests that failed. This can happen due to various causes but we should only
     //     need to halt if the segments stream errors.
     //  4. Start streaming chunks from each request, again ignoring errors.
@@ -42,10 +42,11 @@ pub fn media_file_stream(
             // todo: support relative uri
             // todo: support encryption
 
+            log::trace!("Fetching segment");
             let builder = HTTP_CLIENT.get(segment.uri);
             Ok(builder.send().map(Ok))
         })
-        .try_buffered(1)
+        .try_buffered(5)
         .try_filter_map(|maybe_response| async move {
             match maybe_response {
                 Ok(response) => Ok(Some(response)),
@@ -60,10 +61,7 @@ pub fn media_file_stream(
                 .bytes_stream()
                 .filter_map(|maybe_chunk| async move {
                     match maybe_chunk {
-                        Ok(chunk) => {
-                            log::trace!("Emitting {} byte chunk", chunk.len());
-                            Some(Ok(chunk))
-                        }
+                        Ok(chunk) => Some(Ok(chunk)),
                         Err(why) => {
                             log::warn!("Error while streaming playlist segment: {}", why);
                             None

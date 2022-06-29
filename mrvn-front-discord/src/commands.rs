@@ -108,12 +108,12 @@ pub async fn register_commands(
             log::trace!("Registering guild application commands");
             futures::try_join!(
                 guild_id.create_application_command(http_ref, play_command),
-                // guild_id.create_application_command(http_ref, resume_command),
-                // guild_id.create_application_command(http_ref, replace_command),
-                // guild_id.create_application_command(http_ref, pause_command),
-                // guild_id.create_application_command(http_ref, skip_command),
-                // guild_id.create_application_command(http_ref, stop_command),
-                // guild_id.create_application_command(http_ref, nowplaying_command),
+                guild_id.create_application_command(http_ref, resume_command),
+                guild_id.create_application_command(http_ref, replace_command),
+                guild_id.create_application_command(http_ref, pause_command),
+                guild_id.create_application_command(http_ref, skip_command),
+                guild_id.create_application_command(http_ref, stop_command),
+                guild_id.create_application_command(http_ref, nowplaying_command),
             )?;
 
             if config.secret_highfive.is_some() {
@@ -128,13 +128,14 @@ pub async fn register_commands(
             application_command::ApplicationCommand::set_global_application_commands(
                 http_ref,
                 |commands| {
-                    commands.create_application_command(play_command);
-                    // .create_application_command(resume_command)
-                    // .create_application_command(replace_command)
-                    // .create_application_command(pause_command)
-                    // .create_application_command(skip_command)
-                    // .create_application_command(stop_command)
-                    // .create_application_command(nowplaying_command);
+                    commands
+                        .create_application_command(play_command)
+                        .create_application_command(resume_command)
+                        .create_application_command(replace_command)
+                        .create_application_command(pause_command)
+                        .create_application_command(skip_command)
+                        .create_application_command(stop_command)
+                        .create_application_command(nowplaying_command);
 
                     if config.secret_highfive.is_some() {
                         commands

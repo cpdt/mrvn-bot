@@ -23,12 +23,6 @@ pub struct YtdlConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct FfmpegConfig {
-    pub name: String,
-    pub args: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 pub struct SecretHighfive {
     pub image_url: String,
     pub timezone: String,
@@ -56,7 +50,6 @@ pub struct Config {
     pub search_prefix: String,
     pub host_blocklist: Vec<String>,
     pub ytdl: YtdlConfig,
-    pub ffmpeg: FfmpegConfig,
 
     pub command_bot: CommandBot,
     pub voice_bots: Vec<VoiceBot>,
@@ -117,8 +110,6 @@ impl Config {
             host_blocklist: &self.host_blocklist,
             ytdl_name: &self.ytdl.name,
             ytdl_args: &self.ytdl.args,
-            ffmpeg_name: &self.ffmpeg.name,
-            ffmpeg_args: &self.ffmpeg.args,
             buffer_capacity_kb: self.buffer_capacity_kb,
         }
     }
