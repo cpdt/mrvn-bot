@@ -16,6 +16,11 @@ use symphonia::core::formats::{
 };
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{Metadata, MetadataLog};
+use symphonia::core::units::TimeBase;
+
+const AAC_SAMPLES_PER_BLOCK: u32 = 1024;
+const READ_BUF_LEN: usize = mpeg2ts_reader::packet::Packet::SIZE;
+const READ_TRACKS_TIMEOUT_BYTES: usize = mpeg2ts_reader::packet::Packet::SIZE * 4096;
 
 pub struct MpegTsReader {
     reader: MediaSourceStream,
@@ -23,11 +28,14 @@ pub struct MpegTsReader {
 
     ctx: ReadAudioDemuxContext,
     demux: Demultiplex<ReadAudioDemuxContext>,
+
+    read_buf: [u8; READ_BUF_LEN],
 }
 
 packet_filter_switch! {
     ReadAudioFilterSwitch<ReadAudioDemuxContext> {
         AdtsPes: pes::PesPacketFilter<ReadAudioDemuxContext, AdtsElementaryStreamConsumer>,
+        UnknownPes: pes::PesPacketFilter<ReadAudioDemuxContext, UnknownElementaryStreamConsumer>,
 
         Pat: demultiplex::PatPacketFilter<ReadAudioDemuxContext>,
         Pmt: demultiplex::PmtPacketFilter<ReadAudioDemuxContext>,
@@ -91,9 +99,9 @@ impl DemuxContext for ReadAudioDemuxContext {
                 self.stream_count += 1;
                 ReadAudioFilterSwitch::AdtsPes(AdtsElementaryStreamConsumer::new(pmt, stream_info))
             }
-            // Ignore unknown streams.
+            // Ignore unknown streams, but use them to tell if any streams have started.
             demultiplex::FilterRequest::ByStream { .. } => {
-                ReadAudioFilterSwitch::Null(demultiplex::NullPacketFilter::default())
+                ReadAudioFilterSwitch::UnknownPes(UnknownElementaryStreamConsumer::new())
             }
             // Use the default handler for the Program Map Table.
             demultiplex::FilterRequest::Pmt {
@@ -106,6 +114,28 @@ impl DemuxContext for ReadAudioDemuxContext {
             }
         }
     }
+}
+
+pub struct UnknownElementaryStreamConsumer;
+
+impl UnknownElementaryStreamConsumer {
+    fn new() -> pes::PesPacketFilter<ReadAudioDemuxContext, Self> {
+        pes::PesPacketFilter::new(UnknownElementaryStreamConsumer)
+    }
+}
+
+impl pes::ElementaryStreamConsumer<ReadAudioDemuxContext> for UnknownElementaryStreamConsumer {
+    fn start_stream(&mut self, ctx: &mut ReadAudioDemuxContext) {
+        ctx.has_started_any_stream = true;
+    }
+
+    fn begin_packet(&mut self, _ctx: &mut ReadAudioDemuxContext, _header: PesHeader<'_>) {}
+
+    fn continue_packet(&mut self, _ctx: &mut ReadAudioDemuxContext, _data: &[u8]) {}
+
+    fn end_packet(&mut self, _ctx: &mut ReadAudioDemuxContext) {}
+
+    fn continuity_error(&mut self, _ctx: &mut ReadAudioDemuxContext) {}
 }
 
 pub struct AdtsElementaryStreamConsumer {
@@ -296,7 +326,9 @@ impl AdtsConsumer for AdtsDataConsumer {
         self.codec_params = Some(CodecParameters {
             codec: CODEC_TYPE_AAC,
             sample_rate: freq.freq(),
-            time_base: None,
+            time_base: freq
+                .freq()
+                .map(|freq| TimeBase::new(AAC_SAMPLES_PER_BLOCK, freq)),
             n_frames: None,
             start_ts: 0,
             sample_format: None,
@@ -325,8 +357,6 @@ impl AdtsConsumer for AdtsDataConsumer {
     }
 }
 
-const READ_BUF_LEN: usize = mpeg2ts_reader::packet::Packet::SIZE;
-
 impl FormatReader for MpegTsReader {
     fn try_new(
         mut source: MediaSourceStream,
@@ -338,15 +368,23 @@ impl FormatReader for MpegTsReader {
         let mut ctx = ReadAudioDemuxContext::new();
         let mut demux = demultiplex::Demultiplex::new(&mut ctx);
 
+        let mut total_bytes = 0;
+
         // Read until all declared tracks have started.
         // This requires:
         //  - ctx.has_started_any_stream must be true
         //  - ctx.tracks.len() must be >= ctx.stream_count
+        //  - us to pass the timeout
         let mut buf = [0u8; READ_BUF_LEN];
-        while !ctx.has_started_any_stream || ctx.tracks.len() < ctx.stream_count {
+        while (!ctx.has_started_any_stream || ctx.tracks.len() < ctx.stream_count)
+            && total_bytes < READ_TRACKS_TIMEOUT_BYTES
+        {
             match source.read(&mut buf) {
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
-                Ok(read_bytes) => demux.push(&mut ctx, &buf[..read_bytes]),
+                Ok(read_bytes) => {
+                    demux.push(&mut ctx, &buf[..read_bytes]);
+                    total_bytes += read_bytes;
+                }
                 Err(why) => return Err(why.into()),
             }
         }
@@ -356,6 +394,7 @@ impl FormatReader for MpegTsReader {
             metadata: MetadataLog::default(),
             ctx,
             demux,
+            read_buf: [0; READ_BUF_LEN],
         })
     }
 
@@ -378,16 +417,19 @@ impl FormatReader for MpegTsReader {
     }
 
     fn next_packet(&mut self) -> symphonia::core::errors::Result<Packet> {
-        let mut buf = [0u8; READ_BUF_LEN];
-
         loop {
             match self.ctx.packets.pop_front() {
                 Some(maybe_packet) => return maybe_packet,
-                None => match self.reader.read(&mut buf) {
-                    Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
-                    Ok(read_bytes) => self.demux.push(&mut self.ctx, &buf[..read_bytes]),
-                    Err(why) => return Err(why.into()),
-                },
+                None => {
+                    match self.reader.read(&mut self.read_buf) {
+                        Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
+                        Ok(read_bytes) => {
+                            self.demux.push(&mut self.ctx, &self.read_buf[..read_bytes])
+                        }
+                        Err(why) => return Err(why.into()),
+                    }
+                    // log::trace!("{} new packets", self.ctx.packets.len());
+                }
             }
         }
     }

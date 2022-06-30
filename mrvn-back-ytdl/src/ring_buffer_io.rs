@@ -1,9 +1,10 @@
-use crate::ring_buffer::{ring_buffer, Reader, Writer};
+use crate::ring_buffer::{nearest_ring_buffer, Reader, Writer};
+use parking_lot::Mutex;
 use pin_project_lite::pin_project;
-use std::io::Error;
+use std::future::Future;
 use std::ops::DerefMut;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 use std::task::{Context, Poll, Waker};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
@@ -31,7 +32,7 @@ pin_project! {
 }
 
 pub fn ring_buffer_io(reserved: usize) -> (ReaderIo, WriterIo) {
-    let (reader, writer) = ring_buffer(reserved);
+    let (reader, writer) = nearest_ring_buffer(reserved);
 
     let data_available_waker = Arc::new(Mutex::new(WakeOnDrop(None)));
     let space_available_waker = Arc::new(Mutex::new(WakeOnDrop(None)));
@@ -65,6 +66,10 @@ impl WakeOnDrop {
     fn take(&mut self) -> Option<Waker> {
         std::mem::take(&mut self.0)
     }
+
+    fn park(&mut self, cx: &mut Context<'_>) {
+        self.0 = Some(cx.waker().clone());
+    }
 }
 
 impl Drop for WakeOnDrop {
@@ -72,6 +77,16 @@ impl Drop for WakeOnDrop {
         if let Some(waker) = self.take() {
             waker.wake();
         }
+    }
+}
+
+impl ReaderIo {
+    pub async fn watermark_reached(&self, level: usize) {
+        WatermarkReached {
+            reader: self,
+            level,
+        }
+        .await
     }
 }
 
@@ -112,12 +127,12 @@ impl AsyncBufRead for ReaderIo {
                     return Poll::Ready(Ok(Default::default()));
                 }
             };
-            let mut data_available_waker = data_available_waker_mutex.lock().unwrap();
+            let mut data_available_waker = data_available_waker_mutex.lock();
 
             let available_data = me.reader.buffer();
             if available_data.is_empty() {
                 // Tell the writer to wake us when data becomes available.
-                *data_available_waker = WakeOnDrop(Some(cx.waker().clone()));
+                data_available_waker.park(cx);
 
                 return Poll::Pending;
             }
@@ -134,7 +149,7 @@ impl AsyncBufRead for ReaderIo {
         let me = self.project();
 
         let space_available_waker = {
-            let mut space_available_waker = me.space_available_waker.lock().unwrap();
+            let mut space_available_waker = me.space_available_waker.lock();
 
             me.reader.consume(amt);
 
@@ -152,7 +167,7 @@ impl AsyncWrite for WriterIo {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> Poll<Result<usize, Error>> {
+    ) -> Poll<std::io::Result<usize>> {
         let me = self.project();
 
         let available_space = me.writer.buffer();
@@ -164,12 +179,12 @@ impl AsyncWrite for WriterIo {
                     return Poll::Ready(Ok(0));
                 }
             };
-            let mut space_available_waker = space_available_waker_mutex.lock().unwrap();
+            let mut space_available_waker = space_available_waker_mutex.lock();
 
             let available_space = me.writer.buffer();
             if available_space.is_empty() {
                 // Tell the reader to wake us when data becomes available.
-                *space_available_waker = WakeOnDrop(Some(cx.waker().clone()));
+                space_available_waker.park(cx);
 
                 return Poll::Pending;
             }
@@ -187,8 +202,7 @@ impl AsyncWrite for WriterIo {
                 .data_available_waker
                 .as_ref()
                 .expect("can't write after shutdown")
-                .lock()
-                .unwrap();
+                .lock();
 
             me.writer.consume(take_len);
 
@@ -199,20 +213,22 @@ impl AsyncWrite for WriterIo {
         // written something.
         data_available_waker.wake();
 
+        debug_assert!(take_len != 0);
+
         Poll::Ready(Ok(take_len))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let me = self.project();
 
         let data_available_waker = {
             let data_available_waker_mutex =
                 std::mem::take(me.data_available_waker).expect("can't shutdown twice");
-            let mut data_available_waker = data_available_waker_mutex.lock().unwrap();
+            let mut data_available_waker = data_available_waker_mutex.lock();
 
             std::mem::take(data_available_waker.deref_mut())
         };
@@ -222,5 +238,37 @@ impl AsyncWrite for WriterIo {
         data_available_waker.wake();
 
         Poll::Ready(Ok(()))
+    }
+}
+
+pin_project! {
+    struct WatermarkReached<'reader> {
+        reader: &'reader ReaderIo,
+        level: usize,
+    }
+}
+
+impl<'reader> Future for WatermarkReached<'reader> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let me = self.project();
+
+        if me.reader.reader.buffer().len() >= *me.level {
+            return Poll::Ready(());
+        }
+
+        let data_available_waker_mutex = match me.reader.data_available_waker.upgrade() {
+            Some(mutex) => mutex,
+            None => return Poll::Ready(()),
+        };
+        let mut data_available_waker = data_available_waker_mutex.lock();
+
+        if me.reader.reader.buffer().len() >= *me.level {
+            return Poll::Ready(());
+        }
+
+        data_available_waker.park(cx);
+        Poll::Pending
     }
 }

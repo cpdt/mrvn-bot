@@ -1,22 +1,22 @@
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::ops::Range;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-struct RingBuffer {
-    reserved: usize,
+struct RingState {
+    capacity: usize,
     buf: Box<UnsafeCell<[u8]>>,
 
-    is_full: AtomicBool,
-    pos: AtomicUsize,
-    cap: AtomicUsize,
+    read: AtomicUsize,
+    write: AtomicUsize,
 }
 
 pub struct Reader {
-    buffer: Arc<RingBuffer>,
+    state: Arc<RingState>,
 }
 
 pub struct Writer {
-    buffer: Arc<RingBuffer>,
+    state: Arc<RingState>,
 }
 
 unsafe impl Send for Reader {}
@@ -25,147 +25,157 @@ unsafe impl Sync for Reader {}
 unsafe impl Send for Writer {}
 unsafe impl Sync for Writer {}
 
-pub fn ring_buffer(reserved: usize) -> (Reader, Writer) {
-    let buffer = Arc::new(RingBuffer {
-        reserved,
-        buf: into_boxed_unsafecell(vec![0u8; reserved].into_boxed_slice()),
+pub fn nearest_ring_buffer(capacity: usize) -> (Reader, Writer) {
+    let best_capacity = capacity.next_power_of_two().min(usize::MAX / 2);
+    unsafe { unchecked_ring_buffer(best_capacity) }
+}
 
-        is_full: AtomicBool::new(false),
-        pos: AtomicUsize::new(0),
-        cap: AtomicUsize::new(0),
+/// # Safety
+/// `capacity` must be a power of two, and less than `usize::MAX / 2`.
+pub unsafe fn unchecked_ring_buffer(capacity: usize) -> (Reader, Writer) {
+    let state = Arc::new(RingState {
+        capacity,
+        buf: into_boxed_unsafecell(vec![0u8; capacity].into_boxed_slice()),
+
+        read: AtomicUsize::new(0),
+        write: AtomicUsize::new(0),
     });
 
     let reader = Reader {
-        buffer: buffer.clone(),
+        state: state.clone(),
     };
-    let writer = Writer { buffer };
+    let writer = Writer { state };
 
     (reader, writer)
 }
 
 impl Reader {
-    pub fn buffer(&self) -> &[u8] {
-        let is_full = self.buffer.is_full.load(Ordering::SeqCst);
-        let pos = self.buffer.pos.load(Ordering::SeqCst);
-        let cap = self.buffer.cap.load(Ordering::SeqCst);
+    fn read_range(&self) -> Range<usize> {
+        // todo: verify these orderings are needed
+        let read = self.state.read.load(Ordering::SeqCst);
+        let write = self.state.write.load(Ordering::SeqCst);
 
-        let read_range = if pos > cap || (is_full && pos == cap) {
+        // Buffer is empty if read == write
+        if read == write {
+            return Default::default();
+        }
+
+        let read_offset = read & (self.state.capacity - 1);
+        let write_offset = write & (self.state.capacity - 1);
+
+        let read_range = if read_offset >= write_offset {
             //                 V read this region
             // [DDD............DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD]
-            //     ^-cap       ^-pos
+            //     ^-write     ^-read
 
-            debug_assert!(pos < self.buffer.reserved);
-            pos..self.buffer.reserved
+            read_offset..self.state.capacity
         } else {
             //     V read this region
             // [...DDDDDDDDDDDD...........................................................]
-            //     ^-pos       ^-cap
+            //     ^-read      ^-write
 
-            debug_assert!(pos <= cap);
-            pos..cap
+            read_offset..write_offset
         };
 
-        debug_assert!(read_range.start < self.buffer.reserved);
-        debug_assert!(read_range.end <= self.buffer.reserved);
+        debug_assert!(read_range.start < self.state.capacity);
+        debug_assert!(read_range.end <= self.state.capacity);
 
-        let buf_ptr = self.buffer.buf.get() as *const u8;
+        read_range
+    }
 
-        // todo: safety
+    pub fn buffer(&self) -> &[u8] {
+        let read_range = self.read_range();
+
+        let buf_ptr = self.state.buf.get() as *const u8;
+
+        // Safety: result pointer is guaranteed to be in range as long as
+        // read_range.start < capacity, which will always be correct due to the mask.
         let slice_ptr = unsafe { buf_ptr.add(read_range.start) };
 
-        // todo: safety
+        // Safety: len is guaranteed to be in range as long as read_range.end <= capacity, which
+        // will always be correct due to the mask.
+        // Writer will never return an overlapping region until Reader.consume has been called,
+        // since Reader only changes state.read and Writer will only increase state.write.
         unsafe { std::slice::from_raw_parts(slice_ptr, read_range.len()) }
     }
 
     pub fn consume(&mut self, len: usize) {
-        if len == 0 {
-            return;
-        }
+        assert!(len <= self.read_range().len());
+        unsafe { self.consume_unchecked(len) };
+    }
 
-        // we are the only writer to pos
-        let is_full = self.buffer.is_full.load(Ordering::SeqCst);
-        let pos = self.buffer.pos.load(Ordering::SeqCst);
-        let cap = self.buffer.cap.load(Ordering::SeqCst);
-
-        let new_pos = pos + len;
-        let new_pos = if pos > cap || (is_full && pos == cap) {
-            debug_assert!(new_pos <= self.buffer.reserved);
-            if new_pos == self.buffer.reserved {
-                0
-            } else {
-                new_pos
-            }
-        } else {
-            debug_assert!(new_pos <= cap);
-            new_pos
-        };
-
-        self.buffer.pos.store(new_pos, Ordering::SeqCst);
-        self.buffer.is_full.store(false, Ordering::SeqCst);
+    /// # Safety
+    /// `len` must be less than or equal to the length of the slice returned by [buffer].
+    pub unsafe fn consume_unchecked(&mut self, len: usize) {
+        // fetch_add wraps on overflow
+        // todo: verify these orderings are needed
+        self.state.read.fetch_add(len, Ordering::SeqCst);
     }
 }
 
 impl Writer {
-    pub fn buffer(&mut self) -> &mut [u8] {
-        if self.buffer.is_full.load(Ordering::SeqCst) {
+    fn write_range(&self) -> Range<usize> {
+        // todo: verify these orderings are needed
+        let read = self.state.read.load(Ordering::SeqCst);
+        let write = self.state.write.load(Ordering::SeqCst);
+
+        let size = write.wrapping_sub(read);
+
+        // Buffer is full if size == capacity
+        if size == self.state.capacity {
             return Default::default();
         }
 
-        let pos = self.buffer.pos.load(Ordering::SeqCst);
-        let cap = self.buffer.cap.load(Ordering::SeqCst);
+        let read_offset = read & (self.state.capacity - 1);
+        let write_offset = write & (self.state.capacity - 1);
 
-        let write_range = if pos <= cap {
+        let write_range = if read_offset <= write_offset {
             //                 V fill this region
             // [...DDDDDDDDDDDD...........................................................]
-            //     ^-pos       ^-cap
+            //     ^-read      ^-write
 
-            cap..self.buffer.reserved
+            write_offset..self.state.capacity
         } else {
             //       V fill this region
             // [DDDDD......................................DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD]
-            //       ^-cap                                 ^-pos
+            //       ^-write                               ^-read
 
-            cap..pos
+            write_offset..read_offset
         };
 
-        debug_assert!(write_range.start < self.buffer.reserved);
-        debug_assert!(write_range.end <= self.buffer.reserved);
+        debug_assert!(write_range.start < self.state.capacity);
+        debug_assert!(write_range.end <= self.state.capacity);
 
-        let buf_ptr = self.buffer.buf.get() as *mut u8;
+        write_range
+    }
 
-        // todo: safety
+    pub fn buffer(&mut self) -> &mut [u8] {
+        let write_range = self.write_range();
+
+        let buf_ptr = self.state.buf.get() as *mut u8;
+
+        // Safety: result pointer is guaranteed to be in range as long as
+        // write_range.start < capacity, which will always be correct due to the mask.
         let slice_ptr = unsafe { buf_ptr.add(write_range.start) };
 
-        // todo: safety
+        // Safety: len is guaranteed to be in range as long as write_range.end <= capacity, which
+        // will always be correct due to the mask.
+        // Reader will never return an overlapping region until Writer.consume has been called,
+        // since Writer only changes state.write and Reader will only increase state.read.
         unsafe { std::slice::from_raw_parts_mut(slice_ptr, write_range.len()) }
     }
 
     pub fn consume(&mut self, len: usize) {
-        if len == 0 || self.buffer.is_full.load(Ordering::SeqCst) {
-            return;
-        }
+        assert!(len <= self.write_range().len());
+        unsafe { self.consume_unchecked(len) };
+    }
 
-        // we are the only writer to cap
-        let pos = self.buffer.pos.load(Ordering::SeqCst);
-        let cap = self.buffer.cap.load(Ordering::SeqCst);
-
-        let new_cap = cap + len;
-        let new_cap = if pos <= cap {
-            debug_assert!(new_cap <= self.buffer.reserved);
-            if new_cap == self.buffer.reserved {
-                0
-            } else {
-                new_cap
-            }
-        } else {
-            debug_assert!(new_cap <= pos);
-            new_cap
-        };
-
-        if new_cap == pos {
-            self.buffer.is_full.store(true, Ordering::SeqCst);
-        }
-        self.buffer.cap.store(new_cap, Ordering::SeqCst);
+    /// # Safety
+    /// `len` must be less than or equal to the length of the slice returned by [buffer].
+    pub unsafe fn consume_unchecked(&mut self, len: usize) {
+        // fetch_add wraps on overflow
+        // todo: verify these orderings are needed
+        self.state.write.fetch_add(len, Ordering::SeqCst);
     }
 }
 

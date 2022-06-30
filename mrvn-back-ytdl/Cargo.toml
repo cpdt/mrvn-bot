@@ -21,6 +21,7 @@ rubato = "0.12"
 byte-slice-cast = "1.2"
 mpeg2ts-reader = "0.15"
 adts-reader = "0.3"
+parking_lot = "0.12"
 
 [dependencies.reqwest]
 version = "0.11"

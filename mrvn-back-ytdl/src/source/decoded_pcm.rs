@@ -15,7 +15,7 @@ pub struct DecodedPcmSource {
     decoder_source: DecoderSource,
 
     decode_offset: usize,
-    interleaved_len: usize,
+    interleaved_byte_len: usize,
     interleaved_byte_offset: usize,
 
     resample: FftFixedInOut<f32>,
@@ -34,7 +34,7 @@ impl DecodedPcmSource {
         let resample = FftFixedInOut::new(
             decoder.codec_params().sample_rate.unwrap() as usize,
             SAMPLE_RATE_RAW,
-            1024,
+            64,
             if is_stereo { 2 } else { 1 },
         )
         .map_err(crate::Error::RubatoConstruction)?;
@@ -47,7 +47,7 @@ impl DecodedPcmSource {
             decoder_source: DecoderSource::new(reader, decoder, track_id),
 
             decode_offset: 0,
-            interleaved_len: 0,
+            interleaved_byte_len: 0,
             interleaved_byte_offset: 0,
 
             resample,
@@ -95,14 +95,16 @@ impl DecodedPcmSource {
             debug_assert!(input_offset <= chunk_frames);
         }
 
+        let output_frames = self.resample.output_frames_next();
+
         // Hol' up, gotta process
-        self.interleaved_len = self.resample.output_frames_next() * self.resample.nbr_channels();
         self.resample
             .process_into_buffer(&self.not_resampled, &mut self.resampled, None)
             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
         // Get our interleaved buffer ready
-        copy_interleaved(&self.resampled, &mut self.interleaved, self.interleaved_len);
+        copy_interleaved(&self.resampled, &mut self.interleaved, output_frames);
+        self.interleaved_byte_len = output_frames * self.resample.nbr_channels() * size_of::<f32>();
         self.interleaved_byte_offset = 0;
 
         // And that's all folks
@@ -122,12 +124,12 @@ impl MediaSource for DecodedPcmSource {
 
 impl Read for DecodedPcmSource {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.interleaved_byte_offset == self.interleaved_len * size_of::<f32>() {
+        if self.interleaved_byte_offset == self.interleaved_byte_len {
             // Looks like we're gonna need a new resampled buffer, chief
             self.next_resampled_chunk()?;
         }
 
-        let interleaved_byte_len = self.interleaved_len * size_of::<f32>();
+        let interleaved_byte_len = self.interleaved_byte_len;
 
         let src_buf =
             &self.interleaved.as_byte_slice()[self.interleaved_byte_offset..interleaved_byte_len];

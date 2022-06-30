@@ -9,7 +9,7 @@
   "only_disconnect_when_alone": true,
   "progress_min_update_secs": 1,
   "progress_max_update_secs": 15,
-  "buffer_capacity_kb": 8,
+  "buffer_capacity_kb": 32,
   "search_prefix": "ytsearch1",
   "host_blocklist": [],
   "ytdl": {

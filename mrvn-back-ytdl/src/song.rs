@@ -1,10 +1,10 @@
 use crate::formats::MpegTsReader;
 use crate::input::{remote_file_stream, remote_hls_stream};
 use crate::ring_buffer_io::ring_buffer_io;
-use crate::source::{DecodedPcmSource, OpusPassthroughSource};
+use crate::source::{AbortOnDropSource, DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
 use futures::future::{AbortHandle, Abortable};
-use futures::pin_mut;
+use futures::{future, pin_mut, TryStreamExt};
 use serenity::model::prelude::UserId;
 use songbird::constants::SAMPLE_RATE_RAW;
 use songbird::input::codec::OpusDecoderState;
@@ -39,6 +39,7 @@ pub struct PlayConfig<'s> {
     pub ytdl_name: &'s str,
     pub ytdl_args: &'s [String],
     pub buffer_capacity_kb: usize,
+    pub buffer_watermark_kb: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -220,6 +221,7 @@ async fn create_source(
     request_builder: reqwest::RequestBuilder,
 ) -> Result<songbird::input::Input, Error> {
     let buffer_capacity_bytes = config.buffer_capacity_kb * 1024;
+    let buffer_watermark_bytes = (config.buffer_watermark_kb * 1024).min(buffer_capacity_bytes);
 
     let initial_response = request_builder
         .try_clone()
@@ -228,8 +230,6 @@ async fn create_source(
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(Error::Http)?;
-
-    let content_length = initial_response.content_length();
 
     let maybe_extension = request_url
         .path_segments()
@@ -251,29 +251,22 @@ async fn create_source(
     maybe_extension.map(|extension| hint.with_extension(extension));
     maybe_mime_type.map(|mime_type| hint.mime_type(mime_type));
 
-    // Reduce the buffer capacity if it's under the content length, to avoid allocating
-    // unnecessary memory.
-    let buffer_capacity_bytes = match content_length {
-        Some(content_length) => {
-            buffer_capacity_bytes.min((content_length as usize).next_power_of_two())
-        }
-        None => buffer_capacity_bytes,
-    };
-
     // Start streaming chunks from the remote
-    let (_abort_stream, abort_registration) = AbortHandle::new_pair();
+    let (abort_stream, abort_registration) = AbortHandle::new_pair();
     let (ring_reader, mut ring_writer) = ring_buffer_io(buffer_capacity_bytes);
     tokio::spawn(Abortable::new(
         async move {
             let maybe_err = if is_mpeg_stream {
-                let stream = remote_hls_stream(initial_response, request_builder);
-                let reader = StreamReader::new(stream);
+                let stream = remote_hls_stream(request_url, initial_response, request_builder);
+                let reader =
+                    StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
                 pin_mut!(reader);
 
                 copy_buf(&mut reader, &mut ring_writer).await
             } else {
                 let stream = remote_file_stream(initial_response, request_builder);
-                let reader = StreamReader::new(stream);
+                let reader =
+                    StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
                 pin_mut!(reader);
 
                 copy_buf(&mut reader, &mut ring_writer).await
@@ -286,19 +279,22 @@ async fn create_source(
         abort_registration,
     ));
 
+    ring_reader.watermark_reached(buffer_watermark_bytes).await;
+
     let sync_reader = SyncIoBridge::new(ring_reader);
 
     // Symphonia does not detect MPEG-TS streams, so we must use a separate branch if we are hinted
     // to have one of those.
     if is_mpeg_stream {
-        create_mpeg_stream_source(sync_reader).await
+        create_mpeg_stream_source(sync_reader, abort_stream).await
     } else {
-        create_file_source(sync_reader, hint).await
+        create_file_source(sync_reader, hint, abort_stream).await
     }
 }
 
 async fn create_mpeg_stream_source(
     reader: impl Read + Sync + Send + 'static,
+    abort: AbortHandle,
 ) -> Result<songbird::input::Input, Error> {
     let maybe_format = tokio::task::spawn_blocking(move || {
         let source = ReadOnlySource::new(reader);
@@ -333,12 +329,11 @@ async fn create_mpeg_stream_source(
         ..Default::default()
     };
 
-    log::trace!("metadata = {:#?}", metadata);
-
     let decoder = AacDecoder::try_new(&track.codec_params, &DecoderOptions::default())
         .map_err(Error::Symphonia)?;
 
     let source = DecodedPcmSource::new(Box::new(format), Box::new(decoder), track_id, is_stereo)?;
+    let source = AbortOnDropSource::new(source, abort);
 
     Ok(Input::new(
         is_stereo,
@@ -352,6 +347,7 @@ async fn create_mpeg_stream_source(
 async fn create_file_source(
     reader: impl Read + Sync + Send + 'static,
     hint: Hint,
+    abort: AbortHandle,
 ) -> Result<Input, Error> {
     let maybe_probe_result = tokio::task::spawn_blocking(move || {
         let source = ReadOnlySource::new(reader);
@@ -429,18 +425,17 @@ async fn create_file_source(
             .codec_params
             .channels
             .map(|channels| channels.count() as u8),
-        sample_rate: track.codec_params.sample_rate,
+        sample_rate: Some(SAMPLE_RATE_RAW as u32),
 
         ..Default::default()
     };
-
-    log::trace!("metadata = {:#?}", metadata);
 
     let decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(Error::Symphonia)?;
 
     let source = DecodedPcmSource::new(format, decoder, track_id, is_stereo)?;
+    let source = AbortOnDropSource::new(source, abort);
 
     Ok(Input::new(
         is_stereo,

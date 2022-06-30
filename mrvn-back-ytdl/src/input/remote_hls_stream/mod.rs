@@ -8,8 +8,9 @@ mod media_file_stream;
 mod media_segment_stream;
 
 pub fn remote_hls_stream(
+    base_url: url::Url,
     initial_response: reqwest::Response,
     request_builder: reqwest::RequestBuilder,
 ) -> impl Stream<Item = io::Result<Bytes>> {
-    media_file_stream(segment_stream(initial_response, request_builder))
+    media_file_stream(base_url, segment_stream(initial_response, request_builder))
 }
