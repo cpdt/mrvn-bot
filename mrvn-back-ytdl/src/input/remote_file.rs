@@ -3,7 +3,7 @@ use bytes::Bytes;
 use futures::Stream;
 use tokio::io;
 
-pub fn remote_file_stream(
+pub fn remote_file_chunks(
     initial_response: reqwest::Response,
     request_builder: reqwest::RequestBuilder,
 ) -> impl Stream<Item = io::Result<Bytes>> {

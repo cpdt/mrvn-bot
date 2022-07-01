@@ -166,7 +166,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
         song: Song,
         config: &PlayConfig<'_>,
         ended_handler: Ended,
-    ) -> Result<(), crate::error::Error> {
+    ) -> Result<(), crate::Error> {
         let input = song.get_input(config).await?;
 
         let track_handle = match &mut self.current_call {
@@ -181,7 +181,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
                     self.songbird.join(self.guild_id, channel_id).await;
                 if let Err(why) = join_result {
                     self.guild_speaker.playing_state = None;
-                    return Err(crate::error::Error::SongbirdJoin(why));
+                    return Err(crate::Error::SongbirdJoin(why));
                 }
 
                 let mut call = call_handle.lock().await;
@@ -210,7 +210,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
                     ))),
                 },
             )
-            .map_err(crate::error::Error::SongbirdTrack)?;
+            .map_err(crate::Error::SongbirdTrack)?;
         self.guild_speaker.playing_state = Some(GuildPlayingState {
             metadata: song.metadata,
             track: track_handle,
@@ -225,43 +225,41 @@ impl<'handle> GuildSpeakerRef<'handle> {
         self.guild_speaker.last_ended_time = Some(Instant::now());
     }
 
-    pub fn stop(&mut self) -> Result<(), crate::error::Error> {
+    pub fn stop(&mut self) -> Result<(), crate::Error> {
         if let Some(playing_state) = &mut self.guild_speaker.playing_state {
             playing_state
                 .track
                 .stop()
-                .map_err(crate::error::Error::SongbirdTrack)?;
+                .map_err(crate::Error::SongbirdTrack)?;
         }
         Ok(())
     }
 
-    pub fn pause(&mut self) -> Result<(), crate::error::Error> {
+    pub fn pause(&mut self) -> Result<(), crate::Error> {
         if let Some(playing_state) = &mut self.guild_speaker.playing_state {
             playing_state
                 .track
                 .pause()
-                .map_err(crate::error::Error::SongbirdTrack)?;
+                .map_err(crate::Error::SongbirdTrack)?;
             playing_state.is_paused = true;
         }
         Ok(())
     }
 
-    pub fn unpause(&mut self) -> Result<(), crate::error::Error> {
+    pub fn unpause(&mut self) -> Result<(), crate::Error> {
         if let Some(playing_state) = &mut self.guild_speaker.playing_state {
             playing_state
                 .track
                 .play()
-                .map_err(crate::error::Error::SongbirdTrack)?;
+                .map_err(crate::Error::SongbirdTrack)?;
             playing_state.is_paused = false;
         }
         Ok(())
     }
 
-    pub async fn disconnect(&mut self) -> Result<(), crate::error::Error> {
+    pub async fn disconnect(&mut self) -> Result<(), crate::Error> {
         if let Some(call) = &mut self.current_call {
-            call.leave()
-                .await
-                .map_err(crate::error::Error::SongbirdJoin)?;
+            call.leave().await.map_err(crate::Error::SongbirdJoin)?;
         }
         Ok(())
     }
@@ -362,8 +360,7 @@ impl<'handle> GuildSpeakerEndedRef<'handle> {
         song: Song,
         config: &PlayConfig<'_>,
         ended_handler: Ended,
-    ) -> Result<GuildSpeakerRef<'handle>, (GuildSpeakerEndedRef<'handle>, crate::error::Error)>
-    {
+    ) -> Result<GuildSpeakerRef<'handle>, (GuildSpeakerEndedRef<'handle>, crate::Error)> {
         match self.guild_speaker_ref.current_channel() {
             Some(channel_id) => {
                 match self

@@ -84,7 +84,6 @@ First off you need to setup your environment:
     - [Git](https://git-scm.com/)
     - [Rustup](https://rustup.rs/)
     - [youtube-dl](https://youtube-dl.org/)
-    - [FFmpeg](https://www.ffmpeg.org)
  2. Clone the repository by running `git clone https://github.com/cpdt/mrvn-bot`
 
 Once that's done, you can run the following command from inside the repository any time you want to start MRVN. Make sure to replace `/path/to/config.json` with the path to your configuration file saved previously.
