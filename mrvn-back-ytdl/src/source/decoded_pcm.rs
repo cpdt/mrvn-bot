@@ -129,15 +129,13 @@ impl Read for DecodedPcmSource {
             self.next_resampled_chunk()?;
         }
 
-        let interleaved_byte_len = self.interleaved_byte_len;
-
-        let src_buf =
-            &self.interleaved.as_byte_slice()[self.interleaved_byte_offset..interleaved_byte_len];
+        let src_buf = &self.interleaved.as_byte_slice()
+            [self.interleaved_byte_offset..self.interleaved_byte_len];
         let copy_len = buf.len().min(src_buf.len());
         buf[..copy_len].copy_from_slice(&src_buf[..copy_len]);
 
         self.interleaved_byte_offset += copy_len;
-        debug_assert!(self.interleaved_byte_offset <= interleaved_byte_len);
+        debug_assert!(self.interleaved_byte_offset <= self.interleaved_byte_len);
 
         Ok(copy_len)
     }
@@ -255,31 +253,15 @@ fn copy_buffer_ref(
 
 fn copy_interleaved(src: &[Vec<f32>], dest: &mut [f32], frames: usize) {
     let channels = src.len();
-    match channels {
-        // No channels, do nothing
-        0 => (),
-        // Mono
-        1 => {
-            dest[..frames].copy_from_slice(&src[0][..frames]);
-        }
-        // Stereo
-        2 => {
-            let l_buf = &src[0];
-            let r_buf = &src[1];
 
-            for ((&l, &r), dest) in l_buf.iter().zip(r_buf).zip(dest.chunks_exact_mut(2)) {
-                dest[0] = l;
-                dest[1] = r;
-            }
-        }
-        // 3+ channels
-        _ => {
-            for (chan, src_chan) in src.iter().enumerate() {
-                let dest_chan_iter = dest[chan..].iter_mut().step_by(channels);
+    if channels == 1 {
+        dest[..frames].copy_from_slice(&src[0][..frames]);
+    } else {
+        for channel in 0..channels {
+            let src_buf = &src[channel];
 
-                for (&src, dest) in src_chan.iter().zip(dest_chan_iter) {
-                    *dest = src;
-                }
+            for frame in 0..frames {
+                dest[frame * 2 + channel] = src_buf[frame];
             }
         }
     }

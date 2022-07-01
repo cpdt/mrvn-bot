@@ -51,9 +51,8 @@ pub unsafe fn unchecked_ring_buffer(capacity: usize) -> (Reader, Writer) {
 
 impl Reader {
     fn read_range(&self) -> Range<usize> {
-        // todo: verify these orderings are needed
-        let read = self.state.read.load(Ordering::SeqCst);
-        let write = self.state.write.load(Ordering::SeqCst);
+        let read = self.state.read.load(Ordering::Acquire);
+        let write = self.state.write.load(Ordering::Acquire);
 
         // Buffer is empty if read == write
         if read == write {
@@ -108,16 +107,14 @@ impl Reader {
     /// `len` must be less than or equal to the length of the slice returned by [buffer].
     pub unsafe fn consume_unchecked(&mut self, len: usize) {
         // fetch_add wraps on overflow
-        // todo: verify these orderings are needed
-        self.state.read.fetch_add(len, Ordering::SeqCst);
+        self.state.read.fetch_add(len, Ordering::AcqRel);
     }
 }
 
 impl Writer {
     fn write_range(&self) -> Range<usize> {
-        // todo: verify these orderings are needed
-        let read = self.state.read.load(Ordering::SeqCst);
-        let write = self.state.write.load(Ordering::SeqCst);
+        let read = self.state.read.load(Ordering::Acquire);
+        let write = self.state.write.load(Ordering::Acquire);
 
         let size = write.wrapping_sub(read);
 
@@ -174,8 +171,7 @@ impl Writer {
     /// `len` must be less than or equal to the length of the slice returned by [buffer].
     pub unsafe fn consume_unchecked(&mut self, len: usize) {
         // fetch_add wraps on overflow
-        // todo: verify these orderings are needed
-        self.state.write.fetch_add(len, Ordering::SeqCst);
+        self.state.write.fetch_add(len, Ordering::AcqRel);
     }
 }
 

@@ -18,9 +18,8 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::units::TimeBase;
 
-const AAC_SAMPLES_PER_BLOCK: u32 = 1024;
+const AAC_FRAMES_PER_BLOCK: u32 = 1024;
 const READ_BUF_LEN: usize = mpeg2ts_reader::packet::Packet::SIZE;
-const READ_TRACKS_TIMEOUT_BYTES: usize = mpeg2ts_reader::packet::Packet::SIZE * 4096;
 
 pub struct MpegTsReader {
     reader: MediaSourceStream,
@@ -246,8 +245,9 @@ impl pes::ElementaryStreamConsumer<ReadAudioDemuxContext> for AdtsElementaryStre
         );
     }
 
-    fn continuity_error(&mut self, _ctx: &mut ReadAudioDemuxContext) {
-        // todo: should this be handled
+    fn continuity_error(&mut self, ctx: &mut ReadAudioDemuxContext) {
+        ctx.packets
+            .push_back(Err(symphonia::core::errors::Error::ResetRequired));
     }
 }
 
@@ -328,7 +328,7 @@ impl AdtsConsumer for AdtsDataConsumer {
             sample_rate: freq.freq(),
             time_base: freq
                 .freq()
-                .map(|freq| TimeBase::new(AAC_SAMPLES_PER_BLOCK, freq)),
+                .map(|freq| TimeBase::new(AAC_FRAMES_PER_BLOCK, freq)),
             n_frames: None,
             start_ts: 0,
             sample_format: None,
@@ -368,23 +368,15 @@ impl FormatReader for MpegTsReader {
         let mut ctx = ReadAudioDemuxContext::new();
         let mut demux = demultiplex::Demultiplex::new(&mut ctx);
 
-        let mut total_bytes = 0;
-
         // Read until all declared tracks have started.
         // This requires:
         //  - ctx.has_started_any_stream must be true
         //  - ctx.tracks.len() must be >= ctx.stream_count
-        //  - us to pass the timeout
         let mut buf = [0u8; READ_BUF_LEN];
-        while (!ctx.has_started_any_stream || ctx.tracks.len() < ctx.stream_count)
-            && total_bytes < READ_TRACKS_TIMEOUT_BYTES
-        {
+        while !ctx.has_started_any_stream || ctx.tracks.len() < ctx.stream_count {
             match source.read(&mut buf) {
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
-                Ok(read_bytes) => {
-                    demux.push(&mut ctx, &buf[..read_bytes]);
-                    total_bytes += read_bytes;
-                }
+                Ok(read_bytes) => demux.push(&mut ctx, &buf[..read_bytes]),
                 Err(why) => return Err(why.into()),
             }
         }
@@ -420,16 +412,11 @@ impl FormatReader for MpegTsReader {
         loop {
             match self.ctx.packets.pop_front() {
                 Some(maybe_packet) => return maybe_packet,
-                None => {
-                    match self.reader.read(&mut self.read_buf) {
-                        Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
-                        Ok(read_bytes) => {
-                            self.demux.push(&mut self.ctx, &self.read_buf[..read_bytes])
-                        }
-                        Err(why) => return Err(why.into()),
-                    }
-                    // log::trace!("{} new packets", self.ctx.packets.len());
-                }
+                None => match self.reader.read(&mut self.read_buf) {
+                    Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
+                    Ok(read_bytes) => self.demux.push(&mut self.ctx, &self.read_buf[..read_bytes]),
+                    Err(why) => return Err(why.into()),
+                },
             }
         }
     }

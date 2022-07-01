@@ -1,3 +1,3 @@
-mod mpegts;
+mod mpeg_ts_reader;
 
-pub use self::mpegts::*;
+pub use self::mpeg_ts_reader::*;

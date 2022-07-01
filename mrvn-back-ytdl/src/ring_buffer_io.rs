@@ -1,8 +1,6 @@
 use crate::ring_buffer::{nearest_ring_buffer, Reader, Writer};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
-use std::future::Future;
-use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll, Waker};
@@ -57,14 +55,8 @@ pub fn ring_buffer_io(reserved: usize) -> (ReaderIo, WriterIo) {
 }
 
 impl WakeOnDrop {
-    fn wake(mut self) {
-        if let Some(waker) = self.take() {
-            waker.wake();
-        }
-    }
-
     fn take(&mut self) -> Option<Waker> {
-        std::mem::take(&mut self.0)
+        self.0.take()
     }
 
     fn park(&mut self, cx: &mut Context<'_>) {
@@ -77,16 +69,6 @@ impl Drop for WakeOnDrop {
         if let Some(waker) = self.take() {
             waker.wake();
         }
-    }
-}
-
-impl ReaderIo {
-    pub async fn watermark_reached(&self, level: usize) {
-        WatermarkReached {
-            reader: self,
-            level,
-        }
-        .await
     }
 }
 
@@ -153,12 +135,14 @@ impl AsyncBufRead for ReaderIo {
 
             me.reader.consume(amt);
 
-            std::mem::take(space_available_waker.deref_mut())
+            space_available_waker.take()
         };
 
         // If the writer was waiting for space to become available, wake it up now that we've
         // consumed space.
-        space_available_waker.wake();
+        if let Some(waker) = space_available_waker {
+            waker.wake();
+        }
     }
 }
 
@@ -206,12 +190,14 @@ impl AsyncWrite for WriterIo {
 
             me.writer.consume(take_len);
 
-            std::mem::take(data_available_waker.deref_mut())
+            data_available_waker.take()
         };
 
         // If the reader was waiting for data to become available, wake it up now that we've
         // written something.
-        data_available_waker.wake();
+        if let Some(waker) = data_available_waker {
+            waker.wake();
+        }
 
         debug_assert!(take_len != 0);
 
@@ -226,49 +212,21 @@ impl AsyncWrite for WriterIo {
         let me = self.project();
 
         let data_available_waker = {
-            let data_available_waker_mutex =
-                std::mem::take(me.data_available_waker).expect("can't shutdown twice");
+            let data_available_waker_mutex = me
+                .data_available_waker
+                .take()
+                .expect("can't shutdown twice");
             let mut data_available_waker = data_available_waker_mutex.lock();
 
-            std::mem::take(data_available_waker.deref_mut())
+            data_available_waker.take()
         };
 
         // If the reader was waiting for data to become available, wake it up now that we've
         // written EOF.
-        data_available_waker.wake();
+        if let Some(waker) = data_available_waker {
+            waker.wake();
+        }
 
         Poll::Ready(Ok(()))
-    }
-}
-
-pin_project! {
-    struct WatermarkReached<'reader> {
-        reader: &'reader ReaderIo,
-        level: usize,
-    }
-}
-
-impl<'reader> Future for WatermarkReached<'reader> {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let me = self.project();
-
-        if me.reader.reader.buffer().len() >= *me.level {
-            return Poll::Ready(());
-        }
-
-        let data_available_waker_mutex = match me.reader.data_available_waker.upgrade() {
-            Some(mutex) => mutex,
-            None => return Poll::Ready(()),
-        };
-        let mut data_available_waker = data_available_waker_mutex.lock();
-
-        if me.reader.reader.buffer().len() >= *me.level {
-            return Poll::Ready(());
-        }
-
-        data_available_waker.park(cx);
-        Poll::Pending
     }
 }

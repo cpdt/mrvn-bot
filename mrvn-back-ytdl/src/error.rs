@@ -12,6 +12,7 @@ pub enum Error {
     UnsupportedUrl,
     NoDataProvided,
     NoTracks,
+    ScanTimedOut,
 }
 
 impl std::fmt::Display for Error {
@@ -29,6 +30,7 @@ impl std::fmt::Display for Error {
             Error::UnsupportedUrl => write!(f, "Unsupported URL"),
             Error::NoDataProvided => write!(f, "No data provided"),
             Error::NoTracks => write!(f, "Media did not have any playable tracks"),
+            Error::ScanTimedOut => write!(f, "Media scan timed out"),
         }
     }
 }

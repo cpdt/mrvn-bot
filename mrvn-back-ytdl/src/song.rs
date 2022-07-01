@@ -1,5 +1,5 @@
 use crate::formats::MpegTsReader;
-use crate::input::{remote_file_stream, remote_hls_stream};
+use crate::input::{hls_chunks, remote_file_chunks};
 use crate::ring_buffer_io::ring_buffer_io;
 use crate::source::{AbortOnDropSource, DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::Stdio;
+use std::time::Duration;
 use symphonia::core::audio::Layout;
 use symphonia::core::codecs::{
     Decoder, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_NULL, CODEC_TYPE_OPUS,
@@ -24,6 +25,7 @@ use symphonia::core::probe::Hint;
 use symphonia::default::codecs::AacDecoder;
 use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
+use tokio::time::timeout;
 use tokio_util::io::{StreamReader, SyncIoBridge};
 use uuid::Uuid;
 
@@ -38,8 +40,8 @@ pub struct PlayConfig<'s> {
     pub host_blocklist: &'s [String],
     pub ytdl_name: &'s str,
     pub ytdl_args: &'s [String],
+    pub scan_timeout_secs: f64,
     pub buffer_capacity_kb: usize,
-    pub buffer_watermark_kb: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -221,7 +223,7 @@ async fn create_source(
     request_builder: reqwest::RequestBuilder,
 ) -> Result<songbird::input::Input, Error> {
     let buffer_capacity_bytes = config.buffer_capacity_kb * 1024;
-    let buffer_watermark_bytes = (config.buffer_watermark_kb * 1024).min(buffer_capacity_bytes);
+    let scan_timeout = Duration::from_secs_f64(config.scan_timeout_secs);
 
     let initial_response = request_builder
         .try_clone()
@@ -257,14 +259,14 @@ async fn create_source(
     tokio::spawn(Abortable::new(
         async move {
             let maybe_err = if is_mpeg_stream {
-                let stream = remote_hls_stream(request_url, initial_response, request_builder);
+                let stream = hls_chunks(request_url, initial_response, request_builder);
                 let reader =
                     StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
                 pin_mut!(reader);
 
                 copy_buf(&mut reader, &mut ring_writer).await
             } else {
-                let stream = remote_file_stream(initial_response, request_builder);
+                let stream = remote_file_chunks(initial_response, request_builder);
                 let reader =
                     StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
                 pin_mut!(reader);
@@ -279,30 +281,32 @@ async fn create_source(
         abort_registration,
     ));
 
-    ring_reader.watermark_reached(buffer_watermark_bytes).await;
-
     let sync_reader = SyncIoBridge::new(ring_reader);
 
     // Symphonia does not detect MPEG-TS streams, so we must use a separate branch if we are hinted
     // to have one of those.
     if is_mpeg_stream {
-        create_mpeg_stream_source(sync_reader, abort_stream).await
+        create_mpeg_stream_source(sync_reader, abort_stream, scan_timeout).await
     } else {
-        create_file_source(sync_reader, hint, abort_stream).await
+        create_file_source(sync_reader, hint, abort_stream, scan_timeout).await
     }
 }
 
 async fn create_mpeg_stream_source(
     reader: impl Read + Sync + Send + 'static,
     abort: AbortHandle,
+    scan_timeout: Duration,
 ) -> Result<songbird::input::Input, Error> {
-    let maybe_format = tokio::task::spawn_blocking(move || {
+    let scan_future = tokio::task::spawn_blocking(move || {
         let source = ReadOnlySource::new(reader);
         let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
 
         MpegTsReader::try_new(stream, &FormatOptions::default())
-    })
-    .await;
+    });
+    let maybe_format = timeout(scan_timeout, scan_future).await;
+
+    // timeout returns Err if the scan times out
+    let maybe_format = maybe_format.map_err(|_| Error::ScanTimedOut)?;
 
     // spawn_blocking returns Err if the inner function panics, propagate this to our thread
     let maybe_format = maybe_format.unwrap();
@@ -348,8 +352,9 @@ async fn create_file_source(
     reader: impl Read + Sync + Send + 'static,
     hint: Hint,
     abort: AbortHandle,
+    scan_timeout: Duration,
 ) -> Result<Input, Error> {
-    let maybe_probe_result = tokio::task::spawn_blocking(move || {
+    let scan_future = tokio::task::spawn_blocking(move || {
         let source = ReadOnlySource::new(reader);
         let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
 
@@ -363,8 +368,11 @@ async fn create_file_source(
             },
             &MetadataOptions::default(),
         )
-    })
-    .await;
+    });
+    let maybe_probe_result = timeout(scan_timeout, scan_future).await;
+
+    // timeout returns Err if the scan times out
+    let maybe_probe_result = maybe_probe_result.map_err(|_| Error::ScanTimedOut)?;
 
     // spawn_blocking returns Err if the inner function panics, propagate this to our thread
     let maybe_probe_result = maybe_probe_result.unwrap();
