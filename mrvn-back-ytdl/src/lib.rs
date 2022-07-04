@@ -1,9 +1,9 @@
+mod async_ring_buffer;
 mod brain;
 mod error;
 mod formats;
 mod input;
 mod ring_buffer;
-mod ring_buffer_io;
 mod song;
 mod source;
 mod speaker;

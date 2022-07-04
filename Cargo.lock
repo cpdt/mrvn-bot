@@ -954,7 +954,6 @@ dependencies = [
  "log",
  "m3u8-rs",
  "mpeg2ts-reader",
- "parking_lot 0.12.1",
  "pin-project-lite",
  "reqwest",
  "rubato",
@@ -1092,16 +1091,6 @@ dependencies = [
  "instant",
  "lock_api",
  "parking_lot_core 0.8.5",
-]
-
-[[package]]
-name = "parking_lot"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3742b2c103b9f06bc9fff0a37ff4912935851bee6d36f3c02bcc755bcfec228f"
-dependencies = [
- "lock_api",
- "parking_lot_core 0.9.3",
 ]
 
 [[package]]
@@ -1751,7 +1740,7 @@ dependencies = [
  "discortp",
  "flume",
  "futures",
- "parking_lot 0.11.2",
+ "parking_lot",
  "pin-project",
  "rand 0.8.5",
  "serde",
@@ -2129,6 +2118,7 @@ checksum = "cc463cd8deddc3770d20f9852143d50bf6094e640b485cb2e189a2099085ff45"
 dependencies = [
  "bytes 1.1.0",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",

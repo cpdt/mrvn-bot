@@ -1,6 +1,6 @@
+use crate::async_ring_buffer::nearest_async_ring_buffer;
 use crate::formats::MpegTsReader;
 use crate::input::{hls_chunks, remote_file_chunks};
-use crate::ring_buffer_io::ring_buffer_io;
 use crate::source::{AbortOnDropSource, DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
 use futures::future::{AbortHandle, Abortable};
@@ -26,6 +26,7 @@ use symphonia::default::codecs::AacDecoder;
 use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
+use tokio_util::compat::{FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt};
 use tokio_util::io::{StreamReader, SyncIoBridge};
 use uuid::Uuid;
 
@@ -255,23 +256,25 @@ async fn create_source(
 
     // Start streaming chunks from the remote
     let (abort_stream, abort_registration) = AbortHandle::new_pair();
-    let (ring_reader, mut ring_writer) = ring_buffer_io(buffer_capacity_bytes);
+    let (ring_reader, ring_writer) = nearest_async_ring_buffer(buffer_capacity_bytes);
     tokio::spawn(Abortable::new(
         async move {
+            let mut tokio_writer = ring_writer.compat_write();
+
             let maybe_err = if is_mpeg_stream {
                 let stream = hls_chunks(request_url, initial_response, request_builder);
                 let reader =
                     StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
                 pin_mut!(reader);
 
-                copy_buf(&mut reader, &mut ring_writer).await
+                copy_buf(&mut reader, &mut tokio_writer).await
             } else {
                 let stream = remote_file_chunks(initial_response, request_builder);
                 let reader =
                     StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
                 pin_mut!(reader);
 
-                copy_buf(&mut reader, &mut ring_writer).await
+                copy_buf(&mut reader, &mut tokio_writer).await
             };
 
             if let Err(why) = maybe_err {
@@ -281,7 +284,8 @@ async fn create_source(
         abort_registration,
     ));
 
-    let sync_reader = SyncIoBridge::new(ring_reader);
+    let tokio_reader = ring_reader.compat();
+    let sync_reader = SyncIoBridge::new(tokio_reader);
 
     // Symphonia does not detect MPEG-TS streams, so we must use a separate branch if we are hinted
     // to have one of those.
