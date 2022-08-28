@@ -902,6 +902,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mini-io-queue"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50eee5951128806bbc962eb7a705c0d12b269f8ed0ffc39ba9bd4bcb77fceeaa"
+dependencies = [
+ "futures",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -953,6 +962,7 @@ dependencies = [
  "lazy_static",
  "log",
  "m3u8-rs",
+ "mini-io-queue",
  "mpeg2ts-reader",
  "pin-project-lite",
  "reqwest",

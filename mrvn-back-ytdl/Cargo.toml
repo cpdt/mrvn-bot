@@ -51,3 +51,7 @@ features = ["io", "io-util", "compat"]
 [dependencies.uuid]
 version = "1.1"
 features = ["v4"]
+
+[dependencies.mini-io-queue]
+version = "0.1.0"
+features = ["asyncio"]

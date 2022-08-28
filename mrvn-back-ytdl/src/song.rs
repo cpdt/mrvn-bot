@@ -1,10 +1,10 @@
-use crate::async_ring_buffer::nearest_async_ring_buffer;
 use crate::formats::MpegTsReader;
 use crate::input::{hls_chunks, remote_file_chunks};
 use crate::source::{AbortOnDropSource, DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
 use futures::future::{AbortHandle, Abortable};
 use futures::{future, pin_mut, TryStreamExt};
+use mini_io_queue::asyncio::queue;
 use serenity::model::prelude::UserId;
 use songbird::constants::SAMPLE_RATE_RAW;
 use songbird::input::codec::OpusDecoderState;
@@ -256,10 +256,10 @@ async fn create_source(
 
     // Start streaming chunks from the remote
     let (abort_stream, abort_registration) = AbortHandle::new_pair();
-    let (ring_reader, ring_writer) = nearest_async_ring_buffer(buffer_capacity_bytes);
+    let (queue_reader, queue_writer) = queue(buffer_capacity_bytes);
     tokio::spawn(Abortable::new(
         async move {
-            let mut tokio_writer = ring_writer.compat_write();
+            let mut tokio_writer = queue_writer.compat_write();
 
             let maybe_err = if is_mpeg_stream {
                 let stream = hls_chunks(request_url, initial_response, request_builder);
@@ -284,7 +284,7 @@ async fn create_source(
         abort_registration,
     ));
 
-    let tokio_reader = ring_reader.compat();
+    let tokio_reader = queue_reader.compat();
     let sync_reader = SyncIoBridge::new(tokio_reader);
 
     // Symphonia does not detect MPEG-TS streams, so we must use a separate branch if we are hinted
