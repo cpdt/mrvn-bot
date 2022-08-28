@@ -1,7 +1,7 @@
 use crate::HTTP_CLIENT;
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt, TryStreamExt};
-use m3u8_rs::Key;
+use m3u8_rs::{Key, KeyMethod};
 use std::fmt::{Display, Formatter};
 use tokio::io;
 
@@ -36,7 +36,7 @@ pub fn media_file_stream(
                 let base_url = base_url.clone();
 
                 if let Some(Key { method, .. }) = &segment.key {
-                    if method != "NONE" {
+                    if *method != KeyMethod::None {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
                             EncryptionNotSupportedError,
