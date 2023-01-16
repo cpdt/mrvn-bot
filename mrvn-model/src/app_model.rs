@@ -21,7 +21,7 @@ impl<QueueEntry> AppModel<QueueEntry> {
         let handle = self
             .guilds
             .entry(guild_id)
-            .or_insert_with(|| Arc::new(Mutex::new(GuildModel::new(self.config))));
+            .or_insert_with(|| Arc::new(Mutex::new(GuildModel::new(guild_id, self.config))));
         handle.clone()
     }
 }

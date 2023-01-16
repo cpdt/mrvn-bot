@@ -1,9 +1,9 @@
 use crate::config::Config;
 use crate::frontend::Frontend;
-use futures::prelude::*;
+use futures::future;
 use mrvn_back_ytdl::GuildSpeakerHandle;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 async fn check_cleanup_for_speaker(
     guild_speaker_handle: GuildSpeakerHandle,
@@ -35,15 +35,18 @@ async fn check_cleanup_for_speaker(
     }
 
     if config.only_disconnect_when_alone {
-        if let Some(guild) = cache.clone().guild(guild_speaker.guild_id()).await {
-            if let Some(channel) = guild.channels.get(&channel_id) {
-                if let Ok(members) = channel.members(&cache).await {
-                    // Our bot counts as a member, so don't disconnect if there's more than
-                    // just it.
-                    if members.len() > 1 {
-                        return;
-                    }
-                }
+        let maybe_member_count = cache.guild_field(guild_speaker.guild_id(), |guild| {
+            guild
+                .voice_states
+                .values()
+                .filter(|voice_state| voice_state.channel_id == Some(channel_id))
+                .count()
+        });
+
+        if let Some(member_count) = maybe_member_count {
+            // Our bot counts as a member, so don't disconnect if there's more than just it.
+            if member_count > 1 {
+                return;
             }
         }
     }
@@ -56,8 +59,6 @@ async fn check_cleanup_for_speaker(
 }
 
 async fn check_cleanup(frontend: Arc<Frontend>, cache: Arc<serenity::cache::Cache>) {
-    log::trace!("Disconnecting inactive speakers");
-    let work_start_time = Instant::now();
     let futures = frontend
         .backend_brain
         .speakers
@@ -68,10 +69,6 @@ async fn check_cleanup(frontend: Arc<Frontend>, cache: Arc<serenity::cache::Cach
         });
 
     future::join_all(futures).await;
-    log::trace!(
-        "Finished disconnecting inactive speakers, {} secs",
-        work_start_time.elapsed().as_secs_f64()
-    );
 }
 
 pub async fn cleanup_loop(frontend: Arc<Frontend>, cache: Arc<serenity::cache::Cache>) -> ! {

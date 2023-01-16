@@ -1,18 +1,44 @@
-use crate::{AppModelConfig, AppModelDelegate};
-use chrono::{Date, TimeZone, Utc};
+use crate::AppModelConfig;
 use serenity::model::prelude::*;
 use std::any::Any;
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-fn find_first_user_in_channel<'a, Entry: 'a, Delegate: AppModelDelegate>(
+fn find_first_user_in_channel<'a, Entry: 'a>(
+    cache: &serenity::cache::Cache,
     mut queues: impl Iterator<Item = &'a Queue<Entry>>,
-    delegate: &Delegate,
+    guild_id: GuildId,
     channel_id: ChannelId,
 ) -> Option<UserId> {
-    queues
-        .find(|queue| delegate.is_user_in_voice_channel(queue.user_id, channel_id))
-        .map(|queue| queue.user_id)
+    cache
+        .guild_field(guild_id, |guild| {
+            queues
+                .find(|queue| {
+                    let current_channel = guild
+                        .voice_states
+                        .get(&queue.user_id)
+                        .and_then(|voice_state| voice_state.channel_id);
+                    current_channel == Some(channel_id)
+                })
+                .map(|queue| queue.user_id)
+        })
+        .flatten()
+}
+
+fn is_user_in_voice_channel(
+    cache: &serenity::cache::Cache,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    user_id: UserId,
+) -> bool {
+    cache
+        .guild_field(guild_id, |guild| {
+            let current_channel = guild
+                .voice_states
+                .get(&user_id)
+                .and_then(|voice_state| voice_state.channel_id);
+            current_channel == Some(channel_id)
+        })
+        .unwrap_or(false)
 }
 
 pub enum VoteType {
@@ -37,11 +63,6 @@ pub enum NextEntry<QueueEntry> {
     NoneAvailable,
     AlreadyPlaying,
     Entry(QueueEntry),
-}
-
-pub enum SecretStreakStatus {
-    Success,
-    Wait,
 }
 
 struct Queue<Entry> {
@@ -74,29 +95,22 @@ struct ChannelModel {
     last_action_message: Option<ChannelActionMessage>,
 }
 
-struct SecretStreak {
-    last_time: Date<Utc>,
-    streak_days: u64,
-}
-
 pub struct GuildModel<QueueEntry> {
+    guild_id: GuildId,
     config: AppModelConfig,
     message_channel: Option<ChannelId>,
     queues: Vec<Queue<QueueEntry>>,
     channels: HashMap<ChannelId, ChannelModel>,
-
-    secret_streaks: HashMap<UserId, SecretStreak>,
 }
 
 impl<QueueEntry> GuildModel<QueueEntry> {
-    pub fn new(config: AppModelConfig) -> Self {
+    pub fn new(guild_id: GuildId, config: AppModelConfig) -> Self {
         GuildModel {
+            guild_id,
             config,
             message_channel: None,
             queues: Vec::new(),
             channels: HashMap::new(),
-
-            secret_streaks: HashMap::new(),
         }
     }
 
@@ -180,72 +194,10 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         }
     }
 
-    pub fn secret_add_streak(&mut self, user_id: UserId) -> SecretStreakStatus {
-        let now_time = Utc::today();
-
-        match self.secret_streaks.entry(user_id) {
-            Entry::Occupied(mut o) => {
-                let streak = o.get_mut();
-
-                let last_day = self
-                    .config
-                    .secret_highfive_timezone
-                    .from_utc_date(&streak.last_time.naive_utc());
-                let now_day = self
-                    .config
-                    .secret_highfive_timezone
-                    .from_utc_date(&now_time.naive_utc());
-
-                if now_day == last_day {
-                    SecretStreakStatus::Wait
-                } else if now_day == last_day.succ() {
-                    streak.streak_days += 1;
-                    streak.last_time = now_time;
-                    SecretStreakStatus::Success
-                } else {
-                    streak.streak_days = 1;
-                    streak.last_time = now_time;
-                    SecretStreakStatus::Success
-                }
-            }
-            Entry::Vacant(v) => {
-                v.insert(SecretStreak {
-                    last_time: now_time,
-                    streak_days: 1,
-                });
-                SecretStreakStatus::Success
-            }
-        }
-    }
-
-    pub fn secret_get_streak(&self, user_id: UserId) -> u64 {
-        match self.secret_streaks.get(&user_id) {
-            Some(streak) => {
-                let now_time = Utc::today();
-
-                let last_day = self
-                    .config
-                    .secret_highfive_timezone
-                    .from_utc_date(&streak.last_time.naive_utc());
-                let now_day = self
-                    .config
-                    .secret_highfive_timezone
-                    .from_utc_date(&now_time.naive_utc());
-
-                if last_day < now_day.pred() {
-                    0
-                } else {
-                    streak.streak_days
-                }
-            }
-            None => 0,
-        }
-    }
-
     // Events:
-    pub fn next_channel_entry_finished<Delegate: AppModelDelegate>(
+    pub fn next_channel_entry_finished(
         &mut self,
-        delegate: &Delegate,
+        cache: &serenity::cache::Cache,
         channel_id: ChannelId,
     ) -> Option<QueueEntry> {
         let old_playing_state = std::mem::replace(
@@ -271,12 +223,17 @@ impl<QueueEntry> GuildModel<QueueEntry> {
                             .iter()
                             .skip(last_playing_index + 1)
                             .chain(self.queues.iter().take(last_playing_index + 1));
-                        find_first_user_in_channel(queues_iter, delegate, channel_id)
+                        find_first_user_in_channel(cache, queues_iter, self.guild_id, channel_id)
                     }
-                    None => find_first_user_in_channel(self.queues.iter(), delegate, channel_id),
+                    None => find_first_user_in_channel(
+                        cache,
+                        self.queues.iter(),
+                        self.guild_id,
+                        channel_id,
+                    ),
                 }
             }
-            _ => find_first_user_in_channel(self.queues.iter(), delegate, channel_id),
+            _ => find_first_user_in_channel(cache, self.queues.iter(), self.guild_id, channel_id),
         }?;
 
         let next_queue = self.get_user_queue_mut(next_user_id)?;
@@ -297,23 +254,23 @@ impl<QueueEntry> GuildModel<QueueEntry> {
         Some(next_entry)
     }
 
-    pub fn next_channel_entry<Delegate: AppModelDelegate>(
+    pub fn next_channel_entry(
         &mut self,
-        delegate: &Delegate,
+        cache: &serenity::cache::Cache,
         channel_id: ChannelId,
     ) -> NextEntry<QueueEntry> {
         match self.get_channel_playing_state(channel_id) {
             Some(ChannelPlayingState::Playing { .. }) => NextEntry::AlreadyPlaying,
-            _ => match self.next_channel_entry_finished(delegate, channel_id) {
+            _ => match self.next_channel_entry_finished(cache, channel_id) {
                 Some(entry) => NextEntry::Entry(entry),
                 None => NextEntry::NoneAvailable,
             },
         }
     }
 
-    pub fn vote_for_skip<Delegate: AppModelDelegate>(
+    pub fn vote_for_skip(
         &mut self,
-        delegate: &Delegate,
+        cache: &serenity::cache::Cache,
         vote_type: VoteType,
         channel_id: ChannelId,
         user_id: UserId,
@@ -322,6 +279,7 @@ impl<QueueEntry> GuildModel<QueueEntry> {
             VoteType::Skip => self.config.skip_votes_required,
             VoteType::Stop => self.config.stop_votes_required,
         };
+        let guild_id = self.guild_id;
         match self.get_channel_playing_state_mut(channel_id) {
             Some(ChannelPlayingState::Playing {
                 playing_user_id,
@@ -341,7 +299,7 @@ impl<QueueEntry> GuildModel<QueueEntry> {
 
                 // We can skip immediately if the user who played this entry is not in the channel
                 // anymore.
-                if !delegate.is_user_in_voice_channel(*playing_user_id, channel_id) {
+                if !is_user_in_voice_channel(cache, guild_id, channel_id, user_id) {
                     return VoteStatus::Success;
                 }
 

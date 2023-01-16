@@ -28,12 +28,12 @@ default-features = false
 features = ["rustls-tls", "gzip"]
 
 [dependencies.serenity]
-version = "0.10"
+version = "0.11"
 default-features = false
-features = ["cache", "client", "gateway", "rustls_backend", "model", "unstable_discord_api", "voice"]
+features = ["cache", "client", "gateway", "rustls_backend", "model", "voice"]
 
 [dependencies.songbird]
-version = "0.2"
+version = "0.3"
 features = ["gateway", "serenity-rustls"]
 
 [dependencies.symphonia]

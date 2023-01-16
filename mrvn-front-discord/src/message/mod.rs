@@ -134,9 +134,6 @@ pub enum ResponseMessage {
         voice_channel_id: ChannelId,
         count: usize,
     },
-    ImageEmbed {
-        image_url: String,
-    },
     NoMatchingSongsError,
     NotInVoiceChannelError,
     UnsupportedSiteError,
@@ -157,12 +154,6 @@ pub enum ResponseMessage {
     AlreadyPlayingError {
         voice_channel_id: ChannelId,
     },
-
-    StreakWait,
-    Streak {
-        streak_length: u64,
-    },
-    NoStreak,
 }
 
 impl ActionMessage {
@@ -511,19 +502,6 @@ impl ResponseMessage {
                     &[("voice_channel_id", &channel_id_string)],
                 )
             }
-            ResponseMessage::ImageEmbed { image_url } => image_url.clone(),
-
-            ResponseMessage::StreakWait => {
-                config.get_raw_message("response.streak_wait").to_string()
-            }
-            ResponseMessage::Streak { streak_length } => {
-                let streak_length_string = streak_length.to_string();
-                config.get_message(
-                    "response.streak",
-                    &[("streak_length", &streak_length_string)],
-                )
-            }
-            ResponseMessage::NoStreak => config.get_raw_message("response.no_streak").to_string(),
         }
     }
 
@@ -537,11 +515,7 @@ impl ResponseMessage {
             | ResponseMessage::ReplaceSkipped { .. }
             | ResponseMessage::Skipped { .. }
             | ResponseMessage::SkipMoreVotesNeeded { .. }
-            | ResponseMessage::StopMoreVotesNeeded { .. }
-            | ResponseMessage::ImageEmbed { .. }
-            | ResponseMessage::StreakWait
-            | ResponseMessage::Streak { .. }
-            | ResponseMessage::NoStreak => false,
+            | ResponseMessage::StopMoreVotesNeeded { .. } => false,
             ResponseMessage::NoMatchingSongsError
             | ResponseMessage::NotInVoiceChannelError
             | ResponseMessage::UnsupportedSiteError
@@ -558,14 +532,12 @@ impl ResponseMessage {
         embed: &'e mut serenity::builder::CreateEmbed,
         config: &crate::config::Config,
     ) -> &'e mut serenity::builder::CreateEmbed {
-        embed.color(if self.is_error() {
-            config.error_embed_color
-        } else {
-            config.response_embed_color
-        });
-        match self {
-            ResponseMessage::ImageEmbed { image_url } => embed.image(image_url),
-            _ => embed.description(self.to_string(config)),
-        }
+        embed
+            .color(if self.is_error() {
+                config.error_embed_color
+            } else {
+                config.response_embed_color
+            })
+            .description(self.to_string(config))
     }
 }

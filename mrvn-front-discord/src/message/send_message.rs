@@ -5,19 +5,14 @@ use crate::queued_song::QueuedSong;
 use futures::prelude::*;
 use mrvn_model::{ChannelActionMessage, GuildModel};
 use serenity::model::prelude::ChannelId;
-use serenity::{
-    client::Context,
-    model::interactions::{
-        application_command::ApplicationCommandInteraction, InteractionResponseType,
-    },
-};
+use serenity::{client::Context, model::prelude::*};
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 pub enum SendMessageDestination<'interaction> {
     Channel(ChannelId),
     Interaction {
-        interaction: &'interaction ApplicationCommandInteraction,
+        interaction: &'interaction interaction::application_command::ApplicationCommandInteraction,
         is_edit: bool,
     },
 }
@@ -74,7 +69,7 @@ pub async fn send_messages(
                 let channel_message = if is_edit {
                     interaction
                         .edit_original_interaction_response(&ctx.http, |response| {
-                            response.create_embed(|embed| first_message.create_embed(embed, config))
+                            response.embed(|embed| first_message.create_embed(embed, config))
                         })
                         .await
                         .map_err(crate::error::Error::Serenity)?
@@ -82,11 +77,11 @@ pub async fn send_messages(
                     interaction
                         .create_interaction_response(&ctx.http, |response| {
                             response
-                                .kind(InteractionResponseType::ChannelMessageWithSource)
+                                .kind(
+                                    interaction::InteractionResponseType::ChannelMessageWithSource,
+                                )
                                 .interaction_response_data(|data| {
-                                    data.create_embed(|embed| {
-                                        first_message.create_embed(embed, config)
-                                    })
+                                    data.embed(|embed| first_message.create_embed(embed, config))
                                 })
                         })
                         .await

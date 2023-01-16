@@ -1,5 +1,3 @@
-use serenity::model::prelude::*;
-
 #[derive(Debug)]
 pub enum Error {
     Serenity(serenity::Error),
@@ -7,7 +5,6 @@ pub enum Error {
 
     UnknownCommand(String),
     NoGuild,
-    UnknownGuild(GuildId),
     ModelPlayingSpeakerNotDesync,
 }
 
@@ -18,7 +15,6 @@ impl std::fmt::Display for Error {
             Error::Backend(err) => err.fmt(f),
             Error::UnknownCommand(command) => write!(f, "Received unknown command {}", command),
             Error::NoGuild => write!(f, "Command was not invoked from a guild"),
-            Error::UnknownGuild(guild_id) => write!(f, "Unknown guild {}", guild_id),
             Error::ModelPlayingSpeakerNotDesync => write!(
                 f,
                 "Out of sync: model says song is playing, but the speaker disagrees"

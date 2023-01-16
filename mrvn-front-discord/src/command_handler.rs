@@ -18,8 +18,8 @@ impl EventHandler for CommandHandler {
         log::info!("Command client is connected as {}", ready.user.name);
     }
 
-    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        if let Interaction::ApplicationCommand(command) = interaction {
+    async fn interaction_create(&self, ctx: Context, interaction: interaction::Interaction) {
+        if let interaction::Interaction::ApplicationCommand(command) = interaction {
             self.frontend.handle_command(&ctx, &command).await;
         }
     }

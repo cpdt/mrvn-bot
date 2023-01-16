@@ -60,7 +60,7 @@ pub trait SpeakerInit {
     fn register_speaker(self, brain: &mut Brain) -> Self;
 }
 
-impl SpeakerInit for ClientBuilder<'_> {
+impl SpeakerInit for ClientBuilder {
     fn register_speaker(self, brain: &mut Brain) -> Self {
         let songbird = songbird::Songbird::serenity();
         let speaker = Arc::new(Speaker::new(songbird.clone()));

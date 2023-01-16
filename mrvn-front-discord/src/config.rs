@@ -56,8 +56,6 @@ pub struct Config {
     pub command_bot: CommandBot,
     pub voice_bots: Vec<VoiceBot>,
     pub messages: HashMap<String, String>,
-
-    pub secret_highfive: Option<SecretHighfive>,
 }
 
 impl Config {

@@ -42,7 +42,7 @@ impl MediaSource for OpusPassthroughSource {
         false
     }
 
-    fn len(&self) -> Option<u64> {
+    fn byte_len(&self) -> Option<u64> {
         None
     }
 }

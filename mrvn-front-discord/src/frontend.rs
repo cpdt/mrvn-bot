@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::message::{
     send_messages, ActionMessage, Message, ResponseMessage, SendMessageDestination,
 };
-use crate::model_delegate::ModelDelegate;
 use crate::playing_message::build_playing_message;
 use crate::queued_message::build_queued_message;
 use crate::queued_song::QueuedSong;
@@ -11,12 +10,10 @@ use mrvn_back_ytdl::{
     Brain, EndedHandler, GuildSpeakerEndedHandle, GuildSpeakerEndedRef, GuildSpeakerRef, Song,
     SongMetadata,
 };
-use mrvn_model::{
-    AppModel, GuildModel, NextEntry, ReplaceStatus, SecretStreakStatus, VoteStatus, VoteType,
-};
+use mrvn_model::{AppModel, GuildModel, NextEntry, ReplaceStatus, VoteStatus, VoteType};
 use serenity::model::id::{ChannelId, MessageId};
 use serenity::{
-    model::prelude::{application_command, interactions, GuildId, UserId},
+    model::prelude::{application::interaction, GuildId, UserId},
     prelude::*,
 };
 use std::ops::DerefMut;
@@ -53,7 +50,7 @@ impl Frontend {
     pub async fn handle_command(
         self: &Arc<Self>,
         ctx: &Context,
-        command: &interactions::application_command::ApplicationCommandInteraction,
+        command: &interaction::application_command::ApplicationCommandInteraction,
     ) {
         let send_error_res = match self.handle_command_fallable(ctx, command).await {
             Ok(_) => Ok(()),
@@ -62,9 +59,9 @@ impl Frontend {
                 command
                     .create_interaction_response(&ctx.http, |response| {
                         response
-                            .kind(interactions::InteractionResponseType::ChannelMessageWithSource)
+                            .kind(interaction::InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|data| {
-                                data.create_embed(|embed| {
+                                data.embed(|embed| {
                                     embed
                                         .description(
                                             self.config.get_raw_message("action.unknown_error"),
@@ -80,7 +77,7 @@ impl Frontend {
                 log::error!("Error while handling command: {}", why);
                 command
                     .edit_original_interaction_response(&ctx.http, |response| {
-                        response.create_embed(|embed| {
+                        response.embed(|embed| {
                             embed
                                 .description(self.config.get_raw_message("action.unknown_error"))
                                 .color(self.config.response_embed_color)
@@ -99,7 +96,7 @@ impl Frontend {
     async fn handle_command_fallable(
         self: &Arc<Self>,
         ctx: &Context,
-        command: &interactions::application_command::ApplicationCommandInteraction,
+        command: &interaction::application_command::ApplicationCommandInteraction,
     ) -> Result<(), HandleCommandError> {
         let guild_id = command.guild_id.ok_or(HandleCommandError::CreateError(
             crate::error::Error::NoGuild,
@@ -118,7 +115,7 @@ impl Frontend {
                 if let Err(why) = command
                     .create_interaction_response(&ctx.http, |response| {
                         response.kind(
-                            interactions::InteractionResponseType::DeferredChannelMessageWithSource,
+                            interaction::InteractionResponseType::DeferredChannelMessageWithSource,
                         )
                     })
                     .await
@@ -174,7 +171,7 @@ impl Frontend {
     async fn handle_guild_command(
         self: &Arc<Self>,
         ctx: &Context,
-        command: &interactions::application_command::ApplicationCommandInteraction,
+        command: &interaction::application_command::ApplicationCommandInteraction,
         guild_id: GuildId,
         guild_model: &mut GuildModel<QueuedSong>,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
@@ -187,11 +184,9 @@ impl Frontend {
                     .get(0)
                     .and_then(|val| val.resolved.as_ref())
                 {
-                    Some(
-                        application_command::ApplicationCommandInteractionDataOptionValue::String(
-                            val,
-                        ),
-                    ) => val.clone(),
+                    Some(interaction::application_command::CommandDataOptionValue::String(val)) => {
+                        val.clone()
+                    }
                     _ => "".to_string(),
                 };
 
@@ -211,11 +206,9 @@ impl Frontend {
                     .get(0)
                     .and_then(|val| val.resolved.as_ref())
                 {
-                    Some(
-                        application_command::ApplicationCommandInteractionDataOptionValue::String(
-                            val,
-                        ),
-                    ) => val.clone(),
+                    Some(interaction::application_command::CommandDataOptionValue::String(val)) => {
+                        val.clone()
+                    }
                     _ => "".to_string(),
                 };
 
@@ -241,42 +234,6 @@ impl Frontend {
                 log::debug!("Received nowplaying");
                 self.handle_nowplaying_command(ctx, user_id, guild_id).await
             }
-            "highfive" => {
-                log::debug!("Received highfive");
-                match guild_model.secret_add_streak(user_id) {
-                    SecretStreakStatus::Success => Ok(vec![Message::Response {
-                        message: ResponseMessage::ImageEmbed {
-                            image_url: self
-                                .config
-                                .secret_highfive
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    crate::error::Error::UnknownCommand("highfive".to_string())
-                                })?
-                                .image_url
-                                .clone(),
-                        },
-                        delegate: None,
-                    }]),
-                    SecretStreakStatus::Wait => Ok(vec![Message::Response {
-                        message: ResponseMessage::StreakWait,
-                        delegate: None,
-                    }]),
-                }
-            }
-            "streak" => {
-                log::debug!("Received streak");
-                match guild_model.secret_get_streak(user_id) {
-                    0 => Ok(vec![Message::Response {
-                        message: ResponseMessage::NoStreak,
-                        delegate: None,
-                    }]),
-                    streak_length => Ok(vec![Message::Response {
-                        message: ResponseMessage::Streak { streak_length },
-                        delegate: None,
-                    }]),
-                }
-            }
             command_name => Err(crate::error::Error::UnknownCommand(
                 command_name.to_string(),
             )),
@@ -293,20 +250,17 @@ impl Frontend {
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let play_config = self.config.get_play_config();
 
-        let delegate_future = ModelDelegate::new(ctx, guild_id);
-        let song_future =
-            Song::load(term, user_id, &play_config).map_err(crate::error::Error::Backend);
-
-        let (delegate, songs) = match futures::try_join!(delegate_future, song_future) {
+        let songs = match Song::load(term, user_id, &play_config).await {
             Ok(data) => data,
-            Err(crate::error::Error::Backend(mrvn_back_ytdl::Error::UnsupportedUrl)) => {
+            Err(mrvn_back_ytdl::Error::UnsupportedUrl) => {
                 return Ok(vec![Message::Response {
                     message: ResponseMessage::UnsupportedSiteError,
                     delegate: None,
                 }]);
             }
-            Err(why) => return Err(why),
+            Err(why) => return Err(crate::error::Error::Backend(why)),
         };
+
         if songs.is_empty() {
             return Ok(vec![Message::Response {
                 message: ResponseMessage::NoMatchingSongsError,
@@ -337,27 +291,24 @@ impl Frontend {
 
         // From this point on the user needs to be in a channel, otherwise the songs will only stay
         // queued.
-        let channel_id = match delegate.get_user_voice_channel(user_id) {
-            Some(channel) => channel,
-            None => {
-                log::trace!("User is not in any voice channel, song will remain queued");
-                return match metadata {
-                    QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(
-                        self.clone(),
-                        guild_id,
-                        user_id,
-                        song_metadata.id,
-                        ResponseMessage::Queued {
-                            song_title: song_metadata.title,
-                            song_url: song_metadata.url,
-                        },
-                    )]),
-                    QueuedSongsMetadata::Multiple(count) => Ok(vec![Message::Response {
-                        message: ResponseMessage::QueuedMultiple { count },
-                        delegate: None,
-                    }]),
-                };
-            }
+        let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
+            log::trace!("User is not in any voice channel, song will remain queued");
+            return match metadata {
+                QueuedSongsMetadata::Single(song_metadata) => Ok(vec![build_queued_message(
+                    self.clone(),
+                    guild_id,
+                    user_id,
+                    song_metadata.id,
+                    ResponseMessage::Queued {
+                        song_title: song_metadata.title,
+                        song_url: song_metadata.url,
+                    },
+                )]),
+                QueuedSongsMetadata::Multiple(count) => Ok(vec![Message::Response {
+                    message: ResponseMessage::QueuedMultiple { count },
+                    delegate: None,
+                }]),
+            };
         };
 
         // Find a speaker that will be able to play in this channel. We do this before checking if
@@ -391,7 +342,7 @@ impl Frontend {
         };
 
         // Play a song if the model indicates one isn't playing.
-        let next_song = match guild_model.next_channel_entry(&delegate, channel_id) {
+        let next_song = match guild_model.next_channel_entry(&ctx.cache, channel_id) {
             NextEntry::Entry(song) => song,
             NextEntry::AlreadyPlaying | NextEntry::NoneAvailable => {
                 log::trace!("Channel is already playing, song will remain queued");
@@ -486,15 +437,13 @@ impl Frontend {
         guild_id: GuildId,
         guild_model: &mut GuildModel<QueuedSong>,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        let delegate = ModelDelegate::new(ctx, guild_id).await?;
-        let channel_id = match delegate.get_user_voice_channel(user_id) {
-            Some(channel) => channel,
-            None => {
-                return Ok(vec![Message::Response {
+        let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
+            return Ok(vec![
+                Message::Response {
                     message: ResponseMessage::NotInVoiceChannelError,
                     delegate: None,
-                }])
-            }
+                }
+            ])
         };
 
         // See if there's currently a speaker in this channel to unpause.
@@ -545,7 +494,7 @@ impl Frontend {
                 }]);
             }
         };
-        let next_song = match guild_model.next_channel_entry(&delegate, channel_id) {
+        let next_song = match guild_model.next_channel_entry(&ctx.cache, channel_id) {
             NextEntry::Entry(song) => song,
             NextEntry::AlreadyPlaying | NextEntry::NoneAvailable => {
                 log::trace!(
@@ -586,19 +535,15 @@ impl Frontend {
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let play_config = self.config.get_play_config();
 
-        let delegate_future = ModelDelegate::new(ctx, guild_id);
-        let song_future =
-            Song::load(term, user_id, &play_config).map_err(crate::error::Error::Backend);
-
-        let (delegate, songs) = match futures::try_join!(delegate_future, song_future) {
+        let songs = match Song::load(term, user_id, &play_config).await {
             Ok(data) => data,
-            Err(crate::error::Error::Backend(mrvn_back_ytdl::Error::UnsupportedUrl)) => {
+            Err(mrvn_back_ytdl::Error::UnsupportedUrl) => {
                 return Ok(vec![Message::Response {
                     message: ResponseMessage::UnsupportedSiteError,
                     delegate: None,
                 }]);
             }
-            Err(why) => return Err(why),
+            Err(why) => return Err(crate::error::Error::Backend(why)),
         };
 
         if songs.len() == 1 {
@@ -627,7 +572,7 @@ impl Frontend {
         };
 
         let song_metadata = queued_song.song.metadata.clone();
-        let maybe_channel_id = delegate.get_user_voice_channel(user_id);
+        let maybe_channel_id = get_user_voice_channel(&ctx.cache, guild_id, user_id);
         let replace_status = guild_model.replace_entry(user_id, maybe_channel_id, queued_song);
         guild_model.push_entries(user_id, songs_iter);
 
@@ -677,7 +622,7 @@ impl Frontend {
             .ok_or(crate::error::Error::ModelPlayingSpeakerNotDesync)?;
 
         // Play a song if the model indicates one isn't playing.
-        let next_song = match guild_model.next_channel_entry_finished(&delegate, channel_id) {
+        let next_song = match guild_model.next_channel_entry_finished(&ctx.cache, channel_id) {
             Some(song) => song,
             None => {
                 log::trace!("New song is no longer accessible in queue, nothing will play");
@@ -735,15 +680,13 @@ impl Frontend {
         user_id: UserId,
         guild_id: GuildId,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        let delegate = ModelDelegate::new(ctx, guild_id).await?;
-        let channel_id = match delegate.get_user_voice_channel(user_id) {
-            Some(channel) => channel,
-            None => {
-                return Ok(vec![Message::Response {
+        let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
+            return Ok(vec![
+                Message::Response {
                     message: ResponseMessage::NotInVoiceChannelError,
                     delegate: None,
-                }])
-            }
+                }
+            ])
         };
 
         let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
@@ -795,18 +738,17 @@ impl Frontend {
         guild_id: GuildId,
         guild_model: &mut GuildModel<QueuedSong>,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        let delegate = ModelDelegate::new(ctx, guild_id).await?;
-        let channel_id = match delegate.get_user_voice_channel(user_id) {
-            Some(channel) => channel,
-            None => {
-                return Ok(vec![Message::Response {
+        let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
+            return Ok(vec![
+                Message::Response {
                     message: ResponseMessage::NotInVoiceChannelError,
                     delegate: None,
-                }])
-            }
+                }
+            ])
         };
 
-        let skip_status = guild_model.vote_for_skip(&delegate, VoteType::Skip, channel_id, user_id);
+        let skip_status =
+            guild_model.vote_for_skip(&ctx.cache, VoteType::Skip, channel_id, user_id);
 
         let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
         let mut guild_speakers_ref = guild_speakers_handle.lock().await;
@@ -872,19 +814,17 @@ impl Frontend {
         user_id: UserId,
         guild_id: GuildId,
         guild_model: &mut GuildModel<QueuedSong>,
-    ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        let delegate = ModelDelegate::new(ctx, guild_id).await?;
-        let channel_id = match delegate.get_user_voice_channel(user_id) {
-            Some(channel) => channel,
-            None => {
-                return Ok(vec![Message::Response {
+    ) -> Result<Vec<Message>, crate::error::Error> {
+        let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
+            return Ok(vec![
+                Message::Response {
                     message: ResponseMessage::NotInVoiceChannelError,
                     delegate: None,
-                }])
-            }
+                }
+            ])
         };
 
-        match guild_model.vote_for_skip(&delegate, VoteType::Stop, channel_id, user_id) {
+        match guild_model.vote_for_skip(&ctx.cache, VoteType::Stop, channel_id, user_id) {
             VoteStatus::Success => {
                 let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
                 let mut guild_speakers_ref = guild_speakers_handle.lock().await;
@@ -959,7 +899,6 @@ impl Frontend {
             Some(channel_id) => {
                 self.continue_channel_playback(
                     &ctx,
-                    ended_handle.guild_id(),
                     guild_model.deref_mut(),
                     started_channel_id,
                     channel_id,
@@ -1028,15 +967,13 @@ impl Frontend {
         user_id: UserId,
         guild_id: GuildId,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
-        let delegate = ModelDelegate::new(ctx, guild_id).await?;
-        let channel_id = match delegate.get_user_voice_channel(user_id) {
-            Some(channel) => channel,
-            None => {
-                return Ok(vec![Message::Response {
+        let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
+            return Ok(vec![
+                Message::Response {
                     message: ResponseMessage::NotInVoiceChannelError,
                     delegate: None,
-                }])
-            }
+                }
+            ])
         };
 
         let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
@@ -1084,7 +1021,6 @@ impl Frontend {
     async fn continue_channel_playback(
         self: &Arc<Self>,
         ctx: &Context,
-        guild_id: GuildId,
         guild_model: &mut GuildModel<QueuedSong>,
         started_channel_id: ChannelId,
         current_channel_id: ChannelId,
@@ -1107,11 +1043,9 @@ impl Frontend {
             return Ok(Vec::new());
         }
 
-        let delegate = ModelDelegate::new(ctx, guild_id).await?;
-
         // Playing a song can fail - keep trying to play until we succeed or run out of songs
         while let Some(next_song) =
-            guild_model.next_channel_entry_finished(&delegate, current_channel_id)
+            guild_model.next_channel_entry_finished(&ctx.cache, current_channel_id)
         {
             log::trace!("Playing \"{}\" to speaker", next_song.song.metadata.title);
             let next_metadata = next_song.song.metadata.clone();
@@ -1246,4 +1180,19 @@ impl EndedHandler for EndedDelegate {
             ended_handle,
         ));
     }
+}
+
+fn get_user_voice_channel(
+    cache: &serenity::cache::Cache,
+    guild_id: GuildId,
+    user_id: UserId,
+) -> Option<ChannelId> {
+    cache
+        .guild_field(guild_id, |guild| {
+            guild
+                .voice_states
+                .get(&user_id)
+                .and_then(|voice_state| voice_state.channel_id)
+        })
+        .flatten()
 }

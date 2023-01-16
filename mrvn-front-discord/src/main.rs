@@ -10,7 +10,6 @@ mod config;
 mod error;
 mod frontend;
 mod message;
-mod model_delegate;
 mod playing_message;
 mod queued_message;
 mod queued_song;
@@ -40,17 +39,12 @@ async fn main() {
     let model = mrvn_model::AppModel::new(mrvn_model::AppModelConfig {
         skip_votes_required: config.skip_votes_required,
         stop_votes_required: config.stop_votes_required,
-
-        secret_highfive_timezone: match &config.secret_highfive {
-            Some(secret) => secret.timezone.parse().expect("Unable to parse timezone"),
-            None => chrono_tz::Etc::UTC,
-        },
     });
 
     log::info!("Starting {} voice clients", config.voice_bots.len());
     let mut voice_clients = future::try_join_all(config.voice_bots.iter().enumerate().map(
         |(index, bot_config)| {
-            Client::builder(&bot_config.token)
+            Client::builder(&bot_config.token, GatewayIntents::non_privileged())
                 .application_id(bot_config.application_id)
                 .event_handler(voice_handler::VoiceHandler {
                     client_index: index,
@@ -66,15 +60,15 @@ async fn main() {
         backend_brain,
         model,
     ));
-    let mut command_client = Client::builder(&config.command_bot.token)
-        .application_id(config.command_bot.application_id)
-        .event_handler(command_handler::CommandHandler::new(frontend.clone()))
-        .await
-        .expect("Unable to create command client");
+    let mut command_client =
+        Client::builder(&config.command_bot.token, GatewayIntents::non_privileged())
+            .application_id(config.command_bot.application_id)
+            .event_handler(command_handler::CommandHandler::new(frontend.clone()))
+            .await
+            .expect("Unable to create command client");
     commands::register_commands(
         &command_client.cache_and_http.http,
         config.command_bot.guild_id.map(GuildId),
-        &config,
     )
     .await
     .expect("Unable to register commands");

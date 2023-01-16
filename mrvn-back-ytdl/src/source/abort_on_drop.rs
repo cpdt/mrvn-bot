@@ -24,8 +24,8 @@ impl<S: MediaSource> MediaSource for AbortOnDropSource<S> {
         self.inner.is_seekable()
     }
 
-    fn len(&self) -> Option<u64> {
-        self.inner.len()
+    fn byte_len(&self) -> Option<u64> {
+        self.inner.byte_len()
     }
 }
 
