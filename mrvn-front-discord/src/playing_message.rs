@@ -156,7 +156,7 @@ async fn update_playing_message_loop(mut metadata: ActivePlayingActionMetadata) 
     // Guess how often we'd need to tick to update one piece of the progress bar each time
     let update_period_secs = match metadata.song_metadata.duration_seconds {
         Some(duration) => {
-            let time_width = format_time(&*metadata.frontend.config, 0., Some(duration)).len();
+            let time_width = format_time(&metadata.frontend.config, 0., Some(duration)).len();
             let progress_width =
                 (MAX_COLUMNS - time_width - BEFORE_PROGRESS_BAR.len() - AFTER_PROGRESS_BAR.len())
                     .max(1);

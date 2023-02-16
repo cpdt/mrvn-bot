@@ -40,7 +40,7 @@ impl ActionUpdater {
             .channel_id
             .edit_message(&self.http, self.message_id, |message| {
                 message.embed(|embed| {
-                    action_message.create_embed(embed, &*self.config, self.voice_channel)
+                    action_message.create_embed(embed, &self.config, self.voice_channel)
                 })
             })
             .await;

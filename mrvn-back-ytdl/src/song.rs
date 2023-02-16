@@ -112,7 +112,7 @@ impl Song {
 
         let mut ytdl = TokioCommand::new(config.ytdl_name)
             .args(config.ytdl_args)
-            .args(&[
+            .args([
                 "--dump-json",
                 "--ignore-config",
                 "--no-warnings",
@@ -142,7 +142,7 @@ impl Song {
     ) -> Result<Song, Error> {
         let mut ytdl = TokioCommand::new(config.ytdl_name)
             .args(config.ytdl_args)
-            .args(&[
+            .args([
                 "--dump-json",
                 "--ignore-config",
                 "--no-warnings",
