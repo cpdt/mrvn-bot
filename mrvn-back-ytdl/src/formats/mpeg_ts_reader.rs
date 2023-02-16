@@ -341,6 +341,7 @@ impl AdtsConsumer for AdtsDataConsumer {
             max_frames_per_packet: None,
             packet_data_integrity: false,
             verification_check: None,
+            frames_per_block: Some(AAC_FRAMES_PER_BLOCK as u64),
             extra_data: None,
         });
     }
