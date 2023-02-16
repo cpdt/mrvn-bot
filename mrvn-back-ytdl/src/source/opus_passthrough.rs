@@ -48,40 +48,54 @@ impl MediaSource for OpusPassthroughSource {
 }
 
 impl Read for OpusPassthroughSource {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match &mut self.state {
-            State::Header => {
-                // Read the next valid packet for this track
-                let packet = self.next_packet()?;
+    fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut written_len = 0;
 
-                // Write the packet header (packet len as a u16)
-                // This will panic if buf.len() is less than size_of::<u16>()!
-                let header_bytes = (packet.data.len() as u16).to_ne_bytes();
-                let transfer_len = header_bytes.len();
-                buf[..transfer_len].copy_from_slice(&header_bytes);
+        while !buf.is_empty() {
+            match &mut self.state {
+                State::Header => {
+                    // Can't write the header if size_of::<u16>() are free.
+                    if buf.len() < std::mem::size_of::<u16>() {
+                        return Ok(written_len);
+                    }
 
-                // Next read call will return frame data
-                self.state = State::Frame { packet, offset: 0 };
+                    // Read the next valid packet for this track.
+                    let packet = self.next_packet()?;
 
-                Ok(transfer_len)
-            }
-            State::Frame { packet, offset } => {
-                // Copy from the remaining data in the packet
-                let remaining_data = &packet.data[*offset..];
-                let transfer_len = buf.len().min(remaining_data.len());
-                buf[..transfer_len].copy_from_slice(&remaining_data[..transfer_len]);
+                    // Write the packet header (packet len as a u16).
+                    let header_bytes = (packet.data.len() as u16).to_ne_bytes();
+                    let transfer_len = header_bytes.len();
+                    buf[..transfer_len].copy_from_slice(&header_bytes);
 
-                *offset += transfer_len;
-                debug_assert!(*offset <= packet.data.len());
+                    // Offset the buffer so the data isn't overwritten.
+                    buf = &mut buf[transfer_len..];
+                    written_len += transfer_len;
 
-                // If this was the end of the packet, send the header next
-                if *offset == packet.data.len() {
-                    self.state = State::Header;
+                    // Continue with the frame data itself.
+                    self.state = State::Frame { packet, offset: 0 };
                 }
+                State::Frame { packet, offset } => {
+                    // Copy from the remaining data in the packet
+                    let remaining_data = &packet.data[*offset..];
+                    let transfer_len = buf.len().min(remaining_data.len());
+                    buf[..transfer_len].copy_from_slice(&remaining_data[..transfer_len]);
 
-                Ok(transfer_len)
+                    // Offset the src so the same data isn't read next time.
+                    *offset += transfer_len;
+
+                    // Offset the buffer so the data isn't overwritten.
+                    buf = &mut buf[transfer_len..];
+                    written_len += transfer_len;
+
+                    // If this was the end of the packet, send the header next.
+                    if *offset == packet.data.len() {
+                        self.state = State::Header;
+                    }
+                }
             }
         }
+
+        Ok(written_len)
     }
 }
 

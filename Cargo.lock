@@ -839,9 +839,9 @@ dependencies = [
 
 [[package]]
 name = "mini-io-queue"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50eee5951128806bbc962eb7a705c0d12b269f8ed0ffc39ba9bd4bcb77fceeaa"
+checksum = "162bc6778349d60b7aa71e650555ef5390c9646f9f801b85bdd5b6892d0e0dc6"
 dependencies = [
  "futures",
 ]

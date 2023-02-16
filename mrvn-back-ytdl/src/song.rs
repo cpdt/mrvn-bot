@@ -409,6 +409,7 @@ async fn create_file_source(
             };
 
             let source = OpusPassthroughSource::new(format, track_id);
+            let source = AbortOnDropSource::new(source, abort);
 
             return Ok(Input::new(
                 is_stereo,
