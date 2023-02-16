@@ -1,11 +1,12 @@
 FROM rust:buster as builder
-RUN curl -L https://yt-dl.org/downloads/2021.12.17/youtube-dl -o /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl
+RUN apt-get update && apt-get install -y cmake
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/download/2023.01.06/yt-dlp_linux -o /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl
 WORKDIR /usr/src/mrvn-bot
 COPY . .
 RUN cargo install --path ./mrvn-front-discord
 
 FROM bitnami/minideb:buster
-RUN apt-get update && apt-get install -y ca-certificates libopus0 libopus-dev python && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN update-ca-certificates
 COPY --from=builder /usr/local/bin/youtube-dl /usr/local/bin/youtube-dl
 COPY --from=builder /usr/local/cargo/bin/mrvn-front-discord /usr/local/bin/mrvn-front-discord
