@@ -57,8 +57,8 @@ struct YtdlOutput {
 
 fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
     let trimmed_line = line.trim();
-    if trimmed_line.starts_with("ERROR:") {
-        return Err(Error::UnsupportedUrl);
+    if let Some(error) = trimmed_line.strip_prefix("ERROR: ") {
+        return Err(Error::Ytdl(error.to_string()));
     }
 
     let value: YtdlOutput = serde_json::from_str(trimmed_line)
