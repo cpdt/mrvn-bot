@@ -185,6 +185,13 @@ impl<'handle> GuildSpeakerRef<'handle> {
                 }
 
                 let mut call = call_handle.lock().await;
+                if !call.is_deaf() {
+                    let deafen_res = call.deafen(true).await;
+                    if let Err(why) = deafen_res {
+                        self.guild_speaker.playing_state = None;
+                        return Err(crate::Error::SongbirdJoin(why));
+                    }
+                }
                 call.remove_all_global_events();
                 call.add_global_event(
                     songbird::Event::Core(songbird::CoreEvent::DriverDisconnect),
