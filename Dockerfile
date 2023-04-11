@@ -1,6 +1,6 @@
 FROM rust:buster as builder
 RUN apt-get update && apt-get install -y cmake
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/download/2023.02.17/yt-dlp_linux -o /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/download/2023.03.04/yt-dlp_linux -o /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl
 WORKDIR /usr/src/mrvn-bot
 COPY . .
 RUN cargo install --path ./mrvn-front-discord
