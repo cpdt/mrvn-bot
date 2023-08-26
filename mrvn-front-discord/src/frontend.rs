@@ -438,12 +438,10 @@ impl Frontend {
         guild_model: &mut GuildModel<QueuedSong>,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
-            return Ok(vec![
-                Message::Response {
-                    message: ResponseMessage::NotInVoiceChannelError,
-                    delegate: None,
-                }
-            ])
+            return Ok(vec![Message::Response {
+                message: ResponseMessage::NotInVoiceChannelError,
+                delegate: None,
+            }]);
         };
 
         // See if there's currently a speaker in this channel to unpause.
@@ -681,12 +679,10 @@ impl Frontend {
         guild_id: GuildId,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
-            return Ok(vec![
-                Message::Response {
-                    message: ResponseMessage::NotInVoiceChannelError,
-                    delegate: None,
-                }
-            ])
+            return Ok(vec![Message::Response {
+                message: ResponseMessage::NotInVoiceChannelError,
+                delegate: None,
+            }]);
         };
 
         let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);
@@ -739,12 +735,10 @@ impl Frontend {
         guild_model: &mut GuildModel<QueuedSong>,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
-            return Ok(vec![
-                Message::Response {
-                    message: ResponseMessage::NotInVoiceChannelError,
-                    delegate: None,
-                }
-            ])
+            return Ok(vec![Message::Response {
+                message: ResponseMessage::NotInVoiceChannelError,
+                delegate: None,
+            }]);
         };
 
         let skip_status =
@@ -816,12 +810,10 @@ impl Frontend {
         guild_model: &mut GuildModel<QueuedSong>,
     ) -> Result<Vec<Message>, crate::error::Error> {
         let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
-            return Ok(vec![
-                Message::Response {
-                    message: ResponseMessage::NotInVoiceChannelError,
-                    delegate: None,
-                }
-            ])
+            return Ok(vec![Message::Response {
+                message: ResponseMessage::NotInVoiceChannelError,
+                delegate: None,
+            }]);
         };
 
         match guild_model.vote_for_skip(&ctx.cache, VoteType::Stop, channel_id, user_id) {
@@ -968,12 +960,10 @@ impl Frontend {
         guild_id: GuildId,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let Some(channel_id) = get_user_voice_channel(&ctx.cache, guild_id, user_id) else {
-            return Ok(vec![
-                Message::Response {
-                    message: ResponseMessage::NotInVoiceChannelError,
-                    delegate: None,
-                }
-            ])
+            return Ok(vec![Message::Response {
+                message: ResponseMessage::NotInVoiceChannelError,
+                delegate: None,
+            }]);
         };
 
         let guild_speakers_handle = self.backend_brain.guild_speakers(guild_id);

@@ -16,6 +16,8 @@ use symphonia::core::formats::{
 };
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{Metadata, MetadataLog};
+use symphonia::core::probe::{Descriptor, Instantiate, QueryDescriptor};
+use symphonia::core::support_format;
 use symphonia::core::units::TimeBase;
 
 const AAC_FRAMES_PER_BLOCK: u32 = 1024;
@@ -77,19 +79,19 @@ impl DemuxContext for ReadAudioDemuxContext {
     fn construct(&mut self, req: FilterRequest<'_, '_>) -> Self::F {
         match req {
             // Use the default handler for the Program Association Table.
-            demultiplex::FilterRequest::ByPid(mpeg2ts_reader::psi::pat::PAT_PID) => {
+            FilterRequest::ByPid(psi::pat::PAT_PID) => {
                 ReadAudioFilterSwitch::Pat(demultiplex::PatPacketFilter::default())
             }
             // Ignore stuffing data.
-            demultiplex::FilterRequest::ByPid(mpeg2ts_reader::STUFFING_PID) => {
+            FilterRequest::ByPid(mpeg2ts_reader::STUFFING_PID) => {
                 ReadAudioFilterSwitch::Null(demultiplex::NullPacketFilter::default())
             }
             // Ignore other PIDs that weren't announced in the metadata.
-            demultiplex::FilterRequest::ByPid(_) => {
+            FilterRequest::ByPid(_) => {
                 ReadAudioFilterSwitch::Null(demultiplex::NullPacketFilter::default())
             }
             // Handle ADTS streams.
-            demultiplex::FilterRequest::ByStream {
+            FilterRequest::ByStream {
                 stream_type: StreamType::Adts,
                 pmt,
                 stream_info,
@@ -99,16 +101,16 @@ impl DemuxContext for ReadAudioDemuxContext {
                 ReadAudioFilterSwitch::AdtsPes(AdtsElementaryStreamConsumer::new(pmt, stream_info))
             }
             // Ignore unknown streams, but use them to tell if any streams have started.
-            demultiplex::FilterRequest::ByStream { .. } => {
+            FilterRequest::ByStream { .. } => {
                 ReadAudioFilterSwitch::UnknownPes(UnknownElementaryStreamConsumer::new())
             }
             // Use the default handler for the Program Map Table.
-            demultiplex::FilterRequest::Pmt {
+            FilterRequest::Pmt {
                 pid,
                 program_number,
             } => ReadAudioFilterSwitch::Pmt(demultiplex::PmtPacketFilter::new(pid, program_number)),
             // Ignore the Network Information Table.
-            demultiplex::FilterRequest::Nit { .. } => {
+            FilterRequest::Nit { .. } => {
                 ReadAudioFilterSwitch::Null(demultiplex::NullPacketFilter::default())
             }
         }
@@ -358,6 +360,27 @@ impl AdtsConsumer for AdtsDataConsumer {
     }
 }
 
+impl QueryDescriptor for MpegTsReader {
+    fn query() -> &'static [Descriptor] {
+        &[support_format!(
+            "mpeg-ts",
+            "MPEG Transport Stream",
+            &["ts", "tsv", "tsa", "m2t"],
+            &["video/mp2t"],
+            &[
+                &[0x47, 0b00000000], // PUSI=0, priority=0
+                &[0x47, 0b00100000], // PSUI=0, priority=1
+                &[0x47, 0b01000000], // PSUI=1, priority=0
+                &[0x47, 0b01100000], // PSUI=1, priority=1
+            ]
+        )]
+    }
+
+    fn score(_context: &[u8]) -> u8 {
+        255
+    }
+}
+
 impl FormatReader for MpegTsReader {
     fn try_new(
         mut source: MediaSourceStream,
@@ -367,7 +390,7 @@ impl FormatReader for MpegTsReader {
         Self: Sized,
     {
         let mut ctx = ReadAudioDemuxContext::new();
-        let mut demux = demultiplex::Demultiplex::new(&mut ctx);
+        let mut demux = Demultiplex::new(&mut ctx);
 
         // Read until all declared tracks have started.
         // This requires:

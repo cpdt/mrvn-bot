@@ -39,8 +39,8 @@ impl DecodedPcmSource {
         )
         .map_err(crate::Error::RubatoConstruction)?;
 
-        let not_resampled = resample.input_buffer_allocate();
-        let resampled = resample.output_buffer_allocate();
+        let not_resampled = resample.input_buffer_allocate(true);
+        let resampled = resample.output_buffer_allocate(true);
         let interleaved = vec![0.; resample.output_frames_max() * resample.nbr_channels()];
 
         Ok(DecodedPcmSource {
@@ -170,10 +170,10 @@ impl DecoderSource {
 
     fn next_packet(&mut self) -> io::Result<Packet> {
         loop {
-            let packet = self
-                .reader
-                .next_packet()
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+            let packet = self.reader.next_packet().map_err(|err| {
+                log::error!("While decoding: {}", err);
+                io::Error::new(io::ErrorKind::Other, err)
+            })?;
 
             if packet.track_id() == self.track_id {
                 return Ok(packet);

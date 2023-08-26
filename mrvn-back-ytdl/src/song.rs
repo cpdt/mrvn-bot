@@ -1,9 +1,10 @@
 use crate::formats::MpegTsReader;
 use crate::input::{hls_chunks, remote_file_chunks};
-use crate::source::{AbortOnDropSource, DecodedPcmSource, OpusPassthroughSource};
+use crate::source::{AbortOnDrop, AbortOnDropSource, DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
 use futures::future::{AbortHandle, Abortable};
 use futures::{future, pin_mut, TryStreamExt};
+use lazy_static::lazy_static;
 use mini_io_queue::asyncio::queue;
 use serenity::model::prelude::UserId;
 use songbird::constants::SAMPLE_RATE_RAW;
@@ -15,14 +16,12 @@ use std::io::Read;
 use std::process::Stdio;
 use std::time::Duration;
 use symphonia::core::audio::Layout;
-use symphonia::core::codecs::{
-    Decoder, DecoderOptions, CODEC_TYPE_AAC, CODEC_TYPE_NULL, CODEC_TYPE_OPUS,
-};
-use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
+use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
-use symphonia::default::codecs::AacDecoder;
+use symphonia::core::probe::{Hint, Probe};
+use symphonia::default::register_enabled_formats;
 use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
@@ -48,6 +47,9 @@ pub struct PlayConfig<'s> {
 #[derive(serde::Deserialize)]
 struct YtdlOutput {
     pub title: String,
+    pub fulltitle: Option<String>,
+    pub description: Option<String>,
+    pub extractor: String,
     pub webpage_url: String,
     pub url: String,
     pub thumbnail: Option<String>,
@@ -64,10 +66,17 @@ fn parse_ytdl_line(line: &str, user_id: UserId) -> Result<Song, Error> {
     let value: YtdlOutput = serde_json::from_str(trimmed_line)
         .map_err(|err| Error::Parse(err, trimmed_line.to_string()))?;
 
+    // Twitch stream extractor puts the stream title as the description for some reason
+    let title = match &value.extractor as &str {
+        "twitch:stream" => value.description,
+        _ => value.fulltitle,
+    };
+    let title = title.unwrap_or(value.title);
+
     Ok(Song {
         metadata: SongMetadata {
             id: Uuid::new_v4(),
-            title: value.title,
+            title,
             url: value.webpage_url,
             thumbnail_url: value.thumbnail,
             duration_seconds: if value.duration == Some(0.) {
@@ -251,11 +260,20 @@ async fn create_source(
         || maybe_mime_type == Some("audio/mpegurl");
 
     let mut hint = Hint::new();
-    maybe_extension.map(|extension| hint.with_extension(extension));
-    maybe_mime_type.map(|mime_type| hint.mime_type(mime_type));
+
+    if is_mpeg_stream {
+        // todo: use hint of file linked in m3u8
+        // m3u8 stream will probably contain MPEG-TS files
+        hint.with_extension("ts");
+        hint.mime_type("video/mp2t");
+    } else {
+        maybe_extension.map(|extension| hint.with_extension(extension));
+        maybe_mime_type.map(|mime_type| hint.mime_type(mime_type));
+    }
 
     // Start streaming chunks from the remote
     let (abort_stream, abort_registration) = AbortHandle::new_pair();
+    let abort_stream = AbortOnDrop(abort_stream);
     let (queue_reader, queue_writer) = queue(buffer_capacity_bytes);
     tokio::spawn(Abortable::new(
         async move {
@@ -287,87 +305,33 @@ async fn create_source(
     let tokio_reader = queue_reader.compat();
     let sync_reader = SyncIoBridge::new(tokio_reader);
 
-    // Symphonia does not detect MPEG-TS streams, so we must use a separate branch if we are hinted
-    // to have one of those.
-    if is_mpeg_stream {
-        create_mpeg_stream_source(sync_reader, abort_stream, scan_timeout).await
-    } else {
-        create_file_source(sync_reader, hint, abort_stream, scan_timeout).await
-    }
+    create_file_source(sync_reader, hint, abort_stream, scan_timeout).await
 }
 
-async fn create_mpeg_stream_source(
-    reader: impl Read + Sync + Send + 'static,
-    abort: AbortHandle,
-    scan_timeout: Duration,
-) -> Result<songbird::input::Input, Error> {
-    let scan_future = tokio::task::spawn_blocking(move || {
-        let source = ReadOnlySource::new(reader);
-        let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
-
-        MpegTsReader::try_new(stream, &FormatOptions::default())
-    });
-    let maybe_format = timeout(scan_timeout, scan_future).await;
-
-    // timeout returns Err if the scan times out
-    let maybe_format = maybe_format.map_err(|_| Error::ScanTimedOut)?;
-
-    // spawn_blocking returns Err if the inner function panics, propagate this to our thread
-    let maybe_format = maybe_format.unwrap();
-
-    let format = maybe_format.map_err(Error::Symphonia)?;
-    let track = format
-        .tracks()
-        .iter()
-        .find(|track| track.codec_params.codec == CODEC_TYPE_AAC)
-        .ok_or(Error::NoTracks)?;
-
-    let track_id = track.id;
-
-    // Assume the track is stereo if it's not mono. DecodedPcmSource will strip any extra channels.
-    let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
-
-    let metadata = Metadata {
-        channels: track
-            .codec_params
-            .channels
-            .map(|channels| channels.count() as u8),
-        sample_rate: track.codec_params.sample_rate,
-
-        ..Default::default()
+lazy_static! {
+    static ref PROBE: Probe = {
+        let mut probe: Probe = Default::default();
+        register_enabled_formats(&mut probe);
+        probe.register_all::<MpegTsReader>();
+        probe
     };
-
-    let decoder = AacDecoder::try_new(&track.codec_params, &DecoderOptions::default())
-        .map_err(Error::Symphonia)?;
-
-    let source = DecodedPcmSource::new(Box::new(format), Box::new(decoder), track_id, is_stereo)?;
-    let source = AbortOnDropSource::new(source, abort);
-
-    Ok(Input::new(
-        is_stereo,
-        Reader::Extension(Box::new(source)),
-        Codec::FloatPcm,
-        Container::Raw,
-        Some(metadata),
-    ))
 }
 
 async fn create_file_source(
     reader: impl Read + Sync + Send + 'static,
     hint: Hint,
-    abort: AbortHandle,
+    abort: AbortOnDrop,
     scan_timeout: Duration,
 ) -> Result<Input, Error> {
     let scan_future = tokio::task::spawn_blocking(move || {
         let source = ReadOnlySource::new(reader);
         let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
 
-        symphonia::default::get_probe().format(
+        PROBE.format(
             &hint,
             stream,
             &FormatOptions {
                 enable_gapless: true,
-
                 ..Default::default()
             },
             &MetadataOptions::default(),
@@ -398,6 +362,13 @@ async fn create_file_source(
             && track.codec_params.sample_rate == Some(SAMPLE_RATE_RAW as u32);
 
         if can_pass_through {
+            log::trace!(
+                "Track {} (opus passthrough, {} Hz, {})",
+                track.id,
+                SAMPLE_RATE_RAW,
+                if is_stereo { "stereo" } else { "mono" }
+            );
+
             let metadata = Metadata {
                 channels: track
                     .codec_params
@@ -432,6 +403,19 @@ async fn create_file_source(
 
     // Assume the track is stereo if it's not mono. DecodedPcmSource will strip any extra channels.
     let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
+
+    let codec_name = symphonia::default::get_codecs()
+        .get_codec(track.codec_params.codec)
+        .map(|codec| codec.short_name)
+        .unwrap_or("unknown");
+
+    log::trace!(
+        "Track {} ({}, {} Hz, {})",
+        track.id,
+        codec_name,
+        track.codec_params.sample_rate.unwrap(),
+        if is_stereo { "stereo" } else { "mono" }
+    );
 
     let metadata = Metadata {
         channels: track

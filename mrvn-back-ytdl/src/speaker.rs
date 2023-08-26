@@ -2,7 +2,6 @@ use crate::{Brain, PlayConfig, Song, SongMetadata};
 use dashmap::DashMap;
 use serenity::client::ClientBuilder;
 use serenity::{model::prelude::*, prelude::*};
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::MutexGuard;
@@ -300,7 +299,7 @@ struct GuildSpeakerEndedEventHandler<Ended: EndedHandler> {
 impl<Ended: EndedHandler> songbird::events::EventHandler for GuildSpeakerEndedEventHandler<Ended> {
     async fn act(&self, _ctx: &songbird::EventContext<'_>) -> Option<songbird::Event> {
         let mut data_ref = self.data.lock().await;
-        let data = std::mem::replace(data_ref.deref_mut(), None);
+        let data = data_ref.take();
         if let Some((ended_handler, builder)) = data {
             ended_handler.on_ended(builder.build());
         }

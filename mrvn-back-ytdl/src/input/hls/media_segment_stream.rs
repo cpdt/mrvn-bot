@@ -72,11 +72,12 @@ fn segment_list_stream(
             //  - If this isn't the first playlist, filter segments we have already seen
             //  - If this is the first playlist, filter all segments until the first one that ends
             //    before three target durations from the end of the file
+            //    ^ only if the playlist hasn't ended (to support non-live streams)
             let min_end_secs = playlist_duration_secs - media_playlist.target_duration * 3.;
             let filtered_segments = timed_segments
                 .filter(move |(segment_sequence, segment, segment_start_time)| match last_seen_sequence {
                     Some(last_seen_sequence) => *segment_sequence > last_seen_sequence,
-                    None => segment_start_time + segment.duration >= min_end_secs,
+                    None => media_playlist.end_list || segment_start_time + segment.duration >= min_end_secs,
                 });
 
             let segments_with_expiry_time: Vec<_> = filtered_segments
@@ -120,6 +121,10 @@ fn segment_list_stream(
                     request_instant + Duration::from_secs_f32(media_playlist.target_duration / 2.)
                 }
             };
+
+            if media_playlist.end_list {
+                break;
+            }
 
             tokio::time::sleep_until(refresh_instant).await;
         }

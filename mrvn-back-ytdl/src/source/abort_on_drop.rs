@@ -2,20 +2,25 @@ use futures::future::AbortHandle;
 use songbird::input::reader::MediaSource;
 use std::io::{Read, Seek, SeekFrom};
 
-pub struct AbortOnDropSource<S> {
-    inner: S,
-    abort: AbortHandle,
-}
+pub struct AbortOnDrop(pub AbortHandle);
 
-impl<S> AbortOnDropSource<S> {
-    pub fn new(inner: S, abort: AbortHandle) -> Self {
-        AbortOnDropSource { inner, abort }
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
-impl<S> Drop for AbortOnDropSource<S> {
-    fn drop(&mut self) {
-        self.abort.abort()
+pub struct AbortOnDropSource<S> {
+    inner: S,
+    _abort: AbortOnDrop,
+}
+
+impl<S> AbortOnDropSource<S> {
+    pub fn new(inner: S, abort: AbortOnDrop) -> Self {
+        AbortOnDropSource {
+            inner,
+            _abort: abort,
+        }
     }
 }
 
