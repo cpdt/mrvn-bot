@@ -2,6 +2,9 @@ use async_stream::try_stream;
 use futures::{future, stream, Stream, StreamExt, TryStreamExt};
 use m3u8_rs::parse_media_playlist_res;
 use std::fmt::{Debug, Display, Formatter};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use pin_project_lite::pin_project;
 use tokio::io;
 use tokio::time::{Duration, Instant};
 

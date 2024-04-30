@@ -13,12 +13,13 @@ use mrvn_back_ytdl::{
 use mrvn_model::{AppModel, GuildModel, NextEntry, ReplaceStatus, VoteStatus, VoteType};
 use serenity::model::id::{ChannelId, MessageId};
 use serenity::{
-    model::prelude::{application::interaction, GuildId, UserId},
+    model::prelude::{GuildId, UserId},
     prelude::*,
 };
 use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
+use serenity::all::{CommandInteraction, CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse, EditMessage};
 
 const SEND_WORKING_TIMEOUT_MS: u64 = 50;
 
@@ -50,40 +51,35 @@ impl Frontend {
     pub async fn handle_command(
         self: &Arc<Self>,
         ctx: &Context,
-        command: &interaction::application_command::ApplicationCommandInteraction,
+        command: &CommandInteraction,
     ) {
         let send_error_res = match self.handle_command_fallable(ctx, command).await {
             Ok(_) => Ok(()),
             Err(HandleCommandError::CreateError(why)) => {
                 log::error!("Error while handling command: {}", why);
-                command
-                    .create_interaction_response(&ctx.http, |response| {
-                        response
-                            .kind(interaction::InteractionResponseType::ChannelMessageWithSource)
-                            .interaction_response_data(|data| {
-                                data.embed(|embed| {
-                                    embed
-                                        .description(
-                                            self.config.get_raw_message("action.unknown_error"),
-                                        )
-                                        .color(self.config.response_embed_color)
-                                })
-                            })
-                    })
-                    .await
-                    .map(|_| ())
+                command.create_response(
+                    ctx,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .embed(
+                                CreateEmbed::new()
+                                    .description(self.config.get_raw_message("action.unknown_error"))
+                                    .color(self.config.response_embed_color)
+                            )
+                    )
+                ).await
             }
             Err(HandleCommandError::EditError(why)) => {
                 log::error!("Error while handling command: {}", why);
-                command
-                    .edit_original_interaction_response(&ctx.http, |response| {
-                        response.embed(|embed| {
-                            embed
+                command.edit_response(
+                    ctx,
+                    EditInteractionResponse::new()
+                        .embed(
+                            CreateEmbed::new()
                                 .description(self.config.get_raw_message("action.unknown_error"))
                                 .color(self.config.response_embed_color)
-                        })
-                    })
-                    .await
+                        )
+                ).await
                     .map(|_| ())
             }
         };
@@ -96,7 +92,7 @@ impl Frontend {
     async fn handle_command_fallable(
         self: &Arc<Self>,
         ctx: &Context,
-        command: &interaction::application_command::ApplicationCommandInteraction,
+        command: &CommandInteraction,
     ) -> Result<(), HandleCommandError> {
         let guild_id = command.guild_id.ok_or(HandleCommandError::CreateError(
             crate::error::Error::NoGuild,
@@ -112,14 +108,7 @@ impl Frontend {
                 _ = tokio::time::sleep(Duration::from_millis(SEND_WORKING_TIMEOUT_MS)).fuse() => true,
             );
             if show_deferred_message {
-                if let Err(why) = command
-                    .create_interaction_response(&ctx.http, |response| {
-                        response.kind(
-                            interaction::InteractionResponseType::DeferredChannelMessageWithSource,
-                        )
-                    })
-                    .await
-                {
+                if let Err(why) = command.create_response(ctx, CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new())).await {
                     log::error!("Error while sending deferred message: {}", why);
                 }
             }
@@ -171,27 +160,16 @@ impl Frontend {
     async fn handle_guild_command(
         self: &Arc<Self>,
         ctx: &Context,
-        command: &interaction::application_command::ApplicationCommandInteraction,
+        command: &CommandInteraction,
         guild_id: GuildId,
         guild_model: &mut GuildModel<QueuedSong>,
     ) -> Result<Vec<crate::message::Message>, crate::error::Error> {
         let user_id = command.user.id;
         match command.data.name.as_str() {
             "play" => {
-                let term = match command
-                    .data
-                    .options
-                    .get(0)
-                    .and_then(|val| val.resolved.as_ref())
-                {
-                    Some(interaction::application_command::CommandDataOptionValue::String(val)) => {
-                        val.clone()
-                    }
-                    _ => "".to_string(),
-                };
-
+                let term = command.data.options.get(0).and_then(|option| option.value.as_str()).unwrap_or_default();
                 log::debug!("Received play \"{}\"", term);
-                self.handle_queue_play_command(ctx, user_id, guild_id, guild_model, &term)
+                self.handle_queue_play_command(ctx, user_id, guild_id, guild_model, term)
                     .await
             }
             "resume" => {
@@ -200,20 +178,10 @@ impl Frontend {
                     .await
             }
             "replace" => {
-                let term = match command
-                    .data
-                    .options
-                    .get(0)
-                    .and_then(|val| val.resolved.as_ref())
-                {
-                    Some(interaction::application_command::CommandDataOptionValue::String(val)) => {
-                        val.clone()
-                    }
-                    _ => "".to_string(),
-                };
+                let term = command.data.options.get(0).and_then(|option| option.value.as_str()).unwrap_or_default();
 
                 log::debug!("Received replace \"{}\"", term);
-                self.handle_replace_command(ctx, user_id, guild_id, guild_model, &term)
+                self.handle_replace_command(ctx, user_id, guild_id, guild_model, term)
                     .await
             }
             "pause" => {
@@ -1053,7 +1021,7 @@ impl Frontend {
                 .await;
 
             self.clone().update_queued_message(
-                ctx,
+                ctx.clone(),
                 current_channel_id,
                 next_song.queue_message_id,
                 next_metadata.clone(),
@@ -1113,7 +1081,7 @@ impl Frontend {
             .await;
 
         self.clone()
-            .update_queued_message(ctx, channel_id, queued_song.queue_message_id, metadata);
+            .update_queued_message(ctx.clone(), channel_id, queued_song.queue_message_id, metadata);
 
         match play_res {
             Ok(()) => Ok(()),
@@ -1126,7 +1094,7 @@ impl Frontend {
 
     fn update_queued_message(
         self: Arc<Self>,
-        ctx: &Context,
+        ctx: Context,
         channel_id: ChannelId,
         queue_message_id: Option<(ChannelId, MessageId)>,
         metadata: SongMetadata,
@@ -1137,15 +1105,9 @@ impl Frontend {
                 song_url: metadata.url,
             };
 
-            let http = ctx.http.clone();
-
             tokio::task::spawn(async move {
                 let maybe_err = queue_channel_id
-                    .edit_message(&http, queue_message_id, |message| {
-                        message.embed(|embed| {
-                            new_message.create_embed(embed, &self.config, channel_id)
-                        })
-                    })
+                    .edit_message(ctx, queue_message_id, EditMessage::new().embed(new_message.create_embed(&self.config, channel_id)))
                     .await;
 
                 if let Err(why) = maybe_err {
@@ -1177,12 +1139,7 @@ fn get_user_voice_channel(
     guild_id: GuildId,
     user_id: UserId,
 ) -> Option<ChannelId> {
-    cache
-        .guild_field(guild_id, |guild| {
-            guild
-                .voice_states
-                .get(&user_id)
-                .and_then(|voice_state| voice_state.channel_id)
-        })
-        .flatten()
+    let guild = cache.guild(guild_id)?;
+    let voice_state = guild.voice_states.get(&user_id)?;
+    voice_state.channel_id
 }

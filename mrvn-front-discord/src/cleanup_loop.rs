@@ -35,13 +35,8 @@ async fn check_cleanup_for_speaker(
     }
 
     if config.only_disconnect_when_alone {
-        let maybe_member_count = cache.guild_field(guild_speaker.guild_id(), |guild| {
-            guild
-                .voice_states
-                .values()
-                .filter(|voice_state| voice_state.channel_id == Some(channel_id))
-                .count()
-        });
+        let maybe_guild = cache.guild(guild_speaker.guild_id());
+        let maybe_member_count = maybe_guild.map(|guild| guild.voice_states.values().filter(|voice_state| voice_state.channel_id == Some(channel_id)).count());
 
         if let Some(member_count) = maybe_member_count {
             // Our bot counts as a member, so don't disconnect if there's more than just it.

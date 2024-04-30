@@ -9,19 +9,13 @@ fn find_first_user_in_channel<'a, Entry: 'a>(
     guild_id: GuildId,
     channel_id: ChannelId,
 ) -> Option<UserId> {
-    cache
-        .guild_field(guild_id, |guild| {
-            queues
-                .find(|queue| {
-                    let current_channel = guild
-                        .voice_states
-                        .get(&queue.user_id)
-                        .and_then(|voice_state| voice_state.channel_id);
-                    current_channel == Some(channel_id)
-                })
-                .map(|queue| queue.user_id)
-        })
-        .flatten()
+    let guild = cache.guild(guild_id)?;
+    let queue = queues.find(|queue| {
+        let current_channel = guild.voice_states.get(&queue.user_id)
+            .and_then(|voice_state| voice_state.channel_id);
+        current_channel == Some(channel_id)
+    })?;
+    Some(queue.user_id)
 }
 
 fn is_user_in_voice_channel(
@@ -30,15 +24,9 @@ fn is_user_in_voice_channel(
     channel_id: ChannelId,
     user_id: UserId,
 ) -> bool {
-    cache
-        .guild_field(guild_id, |guild| {
-            let current_channel = guild
-                .voice_states
-                .get(&user_id)
-                .and_then(|voice_state| voice_state.channel_id);
-            current_channel == Some(channel_id)
-        })
-        .unwrap_or(false)
+    let Some(guild) = cache.guild(guild_id) else { return false };
+    let current_channel = guild.voice_states.get(&user_id).and_then(|voice_state| voice_state.channel_id);
+    current_channel == Some(channel_id)
 }
 
 pub enum VoteType {
