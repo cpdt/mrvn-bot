@@ -181,7 +181,7 @@ impl Frontend {
                 let term = match command
                     .data
                     .options
-                    .get(0)
+                    .first()
                     .and_then(|val| val.resolved.as_ref())
                 {
                     Some(interaction::application_command::CommandDataOptionValue::String(val)) => {
@@ -203,7 +203,7 @@ impl Frontend {
                 let term = match command
                     .data
                     .options
-                    .get(0)
+                    .first()
                     .and_then(|val| val.resolved.as_ref())
                 {
                     Some(interaction::application_command::CommandDataOptionValue::String(val)) => {
