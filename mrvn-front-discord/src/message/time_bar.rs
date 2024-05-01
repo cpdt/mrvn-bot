@@ -1,6 +1,6 @@
 use crate::config::Config;
 
-pub const MAX_COLUMNS: usize = 59;
+pub const MAX_COLUMNS: usize = 54;
 pub const BEFORE_PROGRESS_BAR: &str = " [";
 pub const AFTER_PROGRESS_BAR: &str = "]";
 
