@@ -1,5 +1,5 @@
 use futures::prelude::*;
-use mrvn_back_ytdl::SpeakerInit;
+use mrvn_back_ytdl::{get_ytdl_version, SpeakerInit};
 use serenity::{model::prelude::*, prelude::*};
 use std::sync::Arc;
 
@@ -34,6 +34,11 @@ async fn main() {
     let config_file = std::fs::File::open(config_file_path).expect("Unable to open config file");
     let config: Arc<config::Config> =
         Arc::new(serde_json::from_reader(config_file).expect("Unable to read config file"));
+
+    let ytdl_version = get_ytdl_version(&config.get_play_config())
+        .await
+        .expect("Unable to check youtube-dl");
+    log::info!("Using youtube-dl version {}", ytdl_version);
 
     let mut backend_brain = mrvn_back_ytdl::Brain::new();
     let model = mrvn_model::AppModel::new(mrvn_model::AppModelConfig {

@@ -10,7 +10,7 @@
   "progress_min_update_secs": 1,
   "progress_max_update_secs": 5,
   "scan_timeout_secs": 5,
-  "buffer_capacity_kb": 1024,
+  "buffer_capacity_kb": 10240,
   "search_prefix": "ytsearch1",
   "host_blocklist": [],
   "ytdl": {
