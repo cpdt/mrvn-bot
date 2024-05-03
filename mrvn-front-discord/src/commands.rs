@@ -1,121 +1,51 @@
-use futures::prelude::*;
+use serenity::all::{CreateCommand, CreateCommandOption};
 use serenity::model::prelude::*;
-
-async fn delete_all_global_application_commands(
-    http: impl AsRef<serenity::http::Http>,
-) -> serenity::Result<()> {
-    let http_ref = http.as_ref();
-    let commands = http_ref.get_global_application_commands().await?;
-    log::trace!("Deleting {} global application commands", commands.len());
-    future::try_join_all(
-        commands
-            .iter()
-            .map(|command| http_ref.delete_global_application_command(command.id.0)),
-    )
-    .await?;
-    Ok(())
-}
-
-fn play_command(
-    command: &mut serenity::builder::CreateApplicationCommand,
-) -> &mut serenity::builder::CreateApplicationCommand {
-    command
-        .name("play")
-        .description("Add a song to your queue.")
-        .create_option(|option| {
-            option
-                .name("term")
-                .description("A search term or song link.")
-                .kind(command::CommandOptionType::String)
-                .required(true)
-        })
-}
-
-fn resume_command(
-    command: &mut serenity::builder::CreateApplicationCommand,
-) -> &mut serenity::builder::CreateApplicationCommand {
-    command.name("resume").description("Resume a paused song.")
-}
-
-fn replace_command(
-    command: &mut serenity::builder::CreateApplicationCommand,
-) -> &mut serenity::builder::CreateApplicationCommand {
-    command
-        .name("replace")
-        .description("Replace your most recent song with a different one.")
-        .create_option(|option| {
-            option
-                .name("term")
-                .description("A search term or song link.")
-                .kind(command::CommandOptionType::String)
-                .required(true)
-        })
-}
-
-fn pause_command(
-    command: &mut serenity::builder::CreateApplicationCommand,
-) -> &mut serenity::builder::CreateApplicationCommand {
-    command.name("pause").description("Pause the current song.")
-}
-
-fn skip_command(
-    command: &mut serenity::builder::CreateApplicationCommand,
-) -> &mut serenity::builder::CreateApplicationCommand {
-    command
-        .name("skip")
-        .description("Vote to skip the current song.")
-}
-
-fn stop_command(
-    command: &mut serenity::builder::CreateApplicationCommand,
-) -> &mut serenity::builder::CreateApplicationCommand {
-    command
-        .name("stop")
-        .description("Vote to skip the current song and stop playback.")
-}
-
-fn nowplaying_command(
-    command: &mut serenity::builder::CreateApplicationCommand,
-) -> &mut serenity::builder::CreateApplicationCommand {
-    command
-        .name("nowplaying")
-        .description("View the current playing song and its progress.")
-}
 
 pub async fn register_commands(
     http: impl AsRef<serenity::http::Http>,
     guild_id: Option<GuildId>,
 ) -> serenity::Result<()> {
     let http_ref = http.as_ref();
+
+    let commands = vec![
+        CreateCommand::new("play")
+            .description("Add a song to your queue.")
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "term",
+                    "A search term or song link.",
+                )
+                .required(true),
+            ),
+        CreateCommand::new("resume").description("Resume a paused song."),
+        CreateCommand::new("replace")
+            .description("Replace your most recent song with a different one.")
+            .add_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "term",
+                    "A search term or song link.",
+                )
+                .required(true),
+            ),
+        CreateCommand::new("pause").description("Pause the current song."),
+        CreateCommand::new("skip").description("Vote to skip the current song."),
+        CreateCommand::new("stop").description("Vote to skip the current song and stop playback."),
+        CreateCommand::new("nowplaying")
+            .description("View the current playing song and its progress."),
+    ];
+
     match guild_id {
         Some(guild_id) => {
-            delete_all_global_application_commands(http_ref).await?;
-            log::trace!("Registering guild application commands");
-            futures::try_join!(
-                guild_id.create_application_command(http_ref, play_command),
-                guild_id.create_application_command(http_ref, resume_command),
-                guild_id.create_application_command(http_ref, replace_command),
-                guild_id.create_application_command(http_ref, pause_command),
-                guild_id.create_application_command(http_ref, skip_command),
-                guild_id.create_application_command(http_ref, stop_command),
-                guild_id.create_application_command(http_ref, nowplaying_command),
-            )?;
+            Command::set_global_commands(http_ref, Vec::new()).await?;
+            guild_id.set_commands(http_ref, commands).await?;
         }
         None => {
             log::trace!("Registering global application commands");
-            command::Command::set_global_application_commands(http_ref, |commands| {
-                commands
-                    .create_application_command(play_command)
-                    .create_application_command(resume_command)
-                    .create_application_command(replace_command)
-                    .create_application_command(pause_command)
-                    .create_application_command(skip_command)
-                    .create_application_command(stop_command)
-                    .create_application_command(nowplaying_command)
-            })
-            .await?;
+            Command::set_global_commands(http_ref, commands).await?;
         }
-    };
+    }
 
     Ok(())
 }

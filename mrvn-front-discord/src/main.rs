@@ -1,6 +1,7 @@
 use futures::prelude::*;
 use mrvn_back_ytdl::{get_ytdl_version, SpeakerInit};
 use serenity::{model::prelude::*, prelude::*};
+use std::future::IntoFuture;
 use std::sync::Arc;
 
 mod cleanup_loop;
@@ -50,11 +51,12 @@ async fn main() {
     let mut voice_clients = future::try_join_all(config.voice_bots.iter().enumerate().map(
         |(index, bot_config)| {
             Client::builder(&bot_config.token, GatewayIntents::non_privileged())
-                .application_id(bot_config.application_id)
+                .application_id(ApplicationId::new(bot_config.application_id))
                 .event_handler(voice_handler::VoiceHandler {
                     client_index: index,
                 })
                 .register_speaker(&mut backend_brain)
+                .into_future()
         },
     ))
     .await
@@ -67,21 +69,20 @@ async fn main() {
     ));
     let mut command_client =
         Client::builder(&config.command_bot.token, GatewayIntents::non_privileged())
-            .application_id(config.command_bot.application_id)
+            .application_id(ApplicationId::new(config.command_bot.application_id))
             .event_handler(command_handler::CommandHandler::new(frontend.clone()))
             .await
             .expect("Unable to create command client");
     commands::register_commands(
-        &command_client.cache_and_http.http,
-        config.command_bot.guild_id.map(GuildId),
+        &command_client.http,
+        config.command_bot.guild_id.map(GuildId::new),
     )
     .await
     .expect("Unable to register commands");
     log::info!("Finished registering application commands");
 
     let cleanup_loop_future =
-        cleanup_loop::cleanup_loop(frontend, command_client.cache_and_http.cache.clone())
-            .map(|_| Ok(()));
+        cleanup_loop::cleanup_loop(frontend, command_client.cache.clone()).map(|_| Ok(()));
 
     futures::try_join!(
         command_client.start(),

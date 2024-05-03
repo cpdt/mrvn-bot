@@ -4,7 +4,7 @@ mod formats;
 mod input;
 mod setup;
 mod song;
-mod source;
+mod songbird;
 mod speaker;
 
 pub use self::brain::*;

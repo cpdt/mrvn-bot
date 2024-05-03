@@ -35,7 +35,8 @@ async fn check_cleanup_for_speaker(
     }
 
     if config.only_disconnect_when_alone {
-        let maybe_member_count = cache.guild_field(guild_speaker.guild_id(), |guild| {
+        let maybe_guild = cache.guild(guild_speaker.guild_id());
+        let maybe_member_count = maybe_guild.map(|guild| {
             guild
                 .voice_states
                 .values()

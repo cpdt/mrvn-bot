@@ -1,32 +1,20 @@
-use crate::formats::MpegTsReader;
 use crate::input::{hls_chunks, remote_file_chunks};
-use crate::source::{AbortOnDrop, AbortOnDropSource, DecodedPcmSource, OpusPassthroughSource};
 use crate::{Error, HTTP_CLIENT};
-use futures::future::{AbortHandle, Abortable};
-use futures::{future, pin_mut, TryStreamExt};
-use lazy_static::lazy_static;
-use mini_io_queue::asyncio::queue;
+use futures::{future, TryStreamExt};
+use serenity::async_trait;
 use serenity::model::prelude::UserId;
-use songbird::constants::SAMPLE_RATE_RAW;
-use songbird::input::codec::OpusDecoderState;
-use songbird::input::{Codec, Container, Input, Metadata, Reader};
+use songbird::input::core::io::MediaSource;
+use songbird::input::{AsyncAdapterStream, AsyncMediaSource, AudioStream, Input, LiveInput};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::SeekFrom;
+use std::pin::Pin;
 use std::process::Stdio;
-use std::time::Duration;
-use symphonia::core::audio::Layout;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
-use symphonia::core::formats::FormatOptions;
-use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions, ReadOnlySource};
-use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::{Hint, Probe};
-use symphonia::default::register_enabled_formats;
-use tokio::io::{copy_buf, AsyncBufReadExt, BufReader};
+use std::task::{Context, Poll};
+use symphonia::core::probe::Hint;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncSeek, BufReader, ReadBuf};
 use tokio::process::Command as TokioCommand;
-use tokio::time::timeout;
-use tokio_util::compat::{FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt};
-use tokio_util::io::{StreamReader, SyncIoBridge};
+use tokio_util::io::StreamReader;
 use uuid::Uuid;
 
 pub struct Song {
@@ -40,7 +28,6 @@ pub struct PlayConfig<'s> {
     pub host_blocklist: &'s [String],
     pub ytdl_name: &'s str,
     pub ytdl_args: &'s [String],
-    pub scan_timeout_secs: f64,
     pub buffer_capacity_kb: usize,
 }
 
@@ -231,9 +218,8 @@ async fn create_source(
     config: &PlayConfig<'_>,
     request_url: url::Url,
     request_builder: reqwest::RequestBuilder,
-) -> Result<songbird::input::Input, Error> {
+) -> Result<Input, Error> {
     let buffer_capacity_bytes = config.buffer_capacity_kb * 1024;
-    let scan_timeout = Duration::from_secs_f64(config.scan_timeout_secs);
 
     let initial_response = request_builder
         .try_clone()
@@ -272,173 +258,72 @@ async fn create_source(
     }
 
     // Start streaming chunks from the remote
-    let (abort_stream, abort_registration) = AbortHandle::new_pair();
-    let abort_stream = AbortOnDrop(abort_stream);
-    let (queue_reader, queue_writer) = queue(buffer_capacity_bytes);
-    tokio::spawn(Abortable::new(
-        async move {
-            let mut tokio_writer = queue_writer.compat_write();
-
-            let maybe_err = if is_mpeg_stream {
-                let stream = hls_chunks(request_url, initial_response, request_builder);
-                let reader =
-                    StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
-                pin_mut!(reader);
-
-                copy_buf(&mut reader, &mut tokio_writer).await
-            } else {
-                let stream = remote_file_chunks(initial_response, request_builder);
-                let reader =
-                    StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
-                pin_mut!(reader);
-
-                copy_buf(&mut reader, &mut tokio_writer).await
-            };
-
-            if let Err(why) = maybe_err {
-                log::warn!("Error while streaming data: {}", why);
-            }
-        },
-        abort_registration,
-    ));
-
-    let tokio_reader = queue_reader.compat();
-    let sync_reader = SyncIoBridge::new(tokio_reader);
-
-    create_file_source(sync_reader, hint, abort_stream, scan_timeout).await
-}
-
-lazy_static! {
-    static ref PROBE: Probe = {
-        let mut probe: Probe = Default::default();
-        register_enabled_formats(&mut probe);
-        probe.register_all::<MpegTsReader>();
-        probe
-    };
-}
-
-async fn create_file_source(
-    reader: impl Read + Sync + Send + 'static,
-    hint: Hint,
-    abort: AbortOnDrop,
-    scan_timeout: Duration,
-) -> Result<Input, Error> {
-    let scan_future = tokio::task::spawn_blocking(move || {
-        let source = ReadOnlySource::new(reader);
-        let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
-
-        PROBE.format(
-            &hint,
-            stream,
-            &FormatOptions {
-                enable_gapless: true,
-                ..Default::default()
-            },
-            &MetadataOptions::default(),
+    let adapter_stream = if is_mpeg_stream {
+        let stream = hls_chunks(request_url, initial_response, request_builder);
+        let reader = StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
+        AsyncAdapterStream::new(
+            Box::new(AsyncReader::new(Box::pin(reader))),
+            buffer_capacity_bytes,
         )
-    });
-    let maybe_probe_result = timeout(scan_timeout, scan_future).await;
+    } else {
+        let stream = remote_file_chunks(initial_response, request_builder);
+        let reader = StreamReader::new(stream.try_filter(|chunk| future::ready(!chunk.is_empty())));
+        AsyncAdapterStream::new(
+            Box::new(AsyncReader::new(Box::pin(reader))),
+            buffer_capacity_bytes,
+        )
+    };
 
-    // timeout returns Err if the scan times out
-    let maybe_probe_result = maybe_probe_result.map_err(|_| Error::ScanTimedOut)?;
+    let audio_stream = AudioStream {
+        input: Box::new(adapter_stream) as Box<dyn MediaSource>,
+        hint: Some(hint),
+    };
+    Ok(Input::Live(LiveInput::Raw(audio_stream), None))
+}
 
-    // spawn_blocking returns Err if the inner function panics, propagate this to our thread
-    let maybe_probe_result = maybe_probe_result.unwrap();
+struct AsyncReader<T> {
+    inner: Pin<Box<T>>,
+}
 
-    let probe_result = maybe_probe_result.map_err(Error::Symphonia)?;
-    let format = probe_result.format;
+impl<T> AsyncReader<T> {
+    fn new(inner: Pin<Box<T>>) -> Self {
+        AsyncReader { inner }
+    }
+}
 
-    // Look for any tracks that can be passed through. This allows us to skip re-encoding if the
-    // stream is in the format Discord expects.
-    // The data must be Opus encoded with a 48kHz sample rate and 20ms long frames.
-    // todo: how can we check frame length?
-    for track in format.tracks() {
-        let track_id = track.id;
+impl<T> AsyncRead for AsyncReader<T>
+where
+    T: AsyncRead,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.inner.as_mut().poll_read(cx, buf)
+    }
+}
 
-        // Assume the track is stereo if it's not mono. This might break for tracks with more channels.
-        let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
-
-        let can_pass_through = track.codec_params.codec == CODEC_TYPE_OPUS
-            && track.codec_params.sample_rate == Some(SAMPLE_RATE_RAW as u32);
-
-        if can_pass_through {
-            log::trace!(
-                "Track {} (opus passthrough, {} Hz, {})",
-                track.id,
-                SAMPLE_RATE_RAW,
-                if is_stereo { "stereo" } else { "mono" }
-            );
-
-            let metadata = Metadata {
-                channels: track
-                    .codec_params
-                    .channels
-                    .map(|channels| channels.count() as u8),
-                sample_rate: track.codec_params.sample_rate,
-
-                ..Default::default()
-            };
-
-            let source = OpusPassthroughSource::new(format, track_id);
-            let source = AbortOnDropSource::new(source, abort);
-
-            return Ok(Input::new(
-                is_stereo,
-                Reader::Extension(Box::new(source)),
-                Codec::Opus(OpusDecoderState::new().unwrap()),
-                Container::Dca { first_frame: 0 },
-                Some(metadata),
-            ));
-        }
+impl<T> AsyncSeek for AsyncReader<T> {
+    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
     }
 
-    // If we are here, we will need to pick a track and decode it to PCM.
-    let track = format
-        .tracks()
-        .iter()
-        .find(|track| track.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or(Error::NoTracks)?;
+    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
+        Poll::Ready(Err(std::io::ErrorKind::Unsupported.into()))
+    }
+}
 
-    let track_id = track.id;
+#[async_trait]
+impl<T> AsyncMediaSource for AsyncReader<T>
+where
+    T: AsyncRead + Send + Sync,
+{
+    fn is_seekable(&self) -> bool {
+        false
+    }
 
-    // Assume the track is stereo if it's not mono. DecodedPcmSource will strip any extra channels.
-    let is_stereo = !matches!(track.codec_params.channel_layout, Some(Layout::Mono));
-
-    let codec_name = symphonia::default::get_codecs()
-        .get_codec(track.codec_params.codec)
-        .map(|codec| codec.short_name)
-        .unwrap_or("unknown");
-
-    log::trace!(
-        "Track {} ({}, {} Hz, {})",
-        track.id,
-        codec_name,
-        track.codec_params.sample_rate.unwrap(),
-        if is_stereo { "stereo" } else { "mono" }
-    );
-
-    let metadata = Metadata {
-        channels: track
-            .codec_params
-            .channels
-            .map(|channels| channels.count() as u8),
-        sample_rate: Some(SAMPLE_RATE_RAW as u32),
-
-        ..Default::default()
-    };
-
-    let decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(Error::Symphonia)?;
-
-    let source = DecodedPcmSource::new(format, decoder, track_id, is_stereo)?;
-    let source = AbortOnDropSource::new(source, abort);
-
-    Ok(Input::new(
-        is_stereo,
-        Reader::Extension(Box::new(source)),
-        Codec::FloatPcm,
-        Container::Raw,
-        Some(metadata),
-    ))
+    async fn byte_len(&self) -> Option<u64> {
+        None
+    }
 }

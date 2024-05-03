@@ -1,3 +1,4 @@
+use crate::songbird::songbird;
 use crate::{Brain, PlayConfig, Song, SongMetadata};
 use dashmap::DashMap;
 use serenity::client::ClientBuilder;
@@ -61,7 +62,7 @@ pub trait SpeakerInit {
 
 impl SpeakerInit for ClientBuilder {
     fn register_speaker(self, brain: &mut Brain) -> Self {
-        let songbird = songbird::Songbird::serenity();
+        let songbird = songbird();
         let speaker = Arc::new(Speaker::new(songbird.clone()));
         brain.speakers.push(speaker.clone());
 
@@ -132,7 +133,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
     pub fn current_channel(&self) -> Option<ChannelId> {
         self.current_call
             .as_ref()
-            .and_then(|call| call.current_channel().map(|id| ChannelId(id.0)))
+            .and_then(|call| call.current_channel().map(|id| ChannelId::new(id.0.get())))
     }
 
     pub fn is_active(&self) -> bool {
@@ -170,18 +171,19 @@ impl<'handle> GuildSpeakerRef<'handle> {
 
         let track_handle = match &mut self.current_call {
             Some(call) if call.current_channel() == Some(channel_id.into()) => {
-                call.play_only_source(input)
+                call.play_only_input(input)
             }
             _ => {
                 // Ensure we don't deadlock by having a current_call lock
                 self.current_call = None;
 
-                let (call_handle, join_result) =
-                    self.songbird.join(self.guild_id, channel_id).await;
-                if let Err(why) = join_result {
-                    self.guild_speaker.playing_state = None;
-                    return Err(crate::Error::SongbirdJoin(why));
-                }
+                let call_handle = match self.songbird.join(self.guild_id, channel_id).await {
+                    Ok(call_handle) => call_handle,
+                    Err(why) => {
+                        self.guild_speaker.playing_state = None;
+                        return Err(crate::Error::SongbirdJoin(why));
+                    }
+                };
 
                 let mut call = call_handle.lock().await;
                 if !call.is_deaf() {
@@ -198,7 +200,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
                         guild_speaker: self.guild_speaker_ref.clone(),
                     },
                 );
-                call.play_only_source(input)
+                call.play_only_input(input)
             }
         };
 
@@ -216,7 +218,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
                     ))),
                 },
             )
-            .map_err(crate::Error::SongbirdTrack)?;
+            .map_err(crate::Error::SongbirdControl)?;
         self.guild_speaker.playing_state = Some(GuildPlayingState {
             metadata: song.metadata,
             track: track_handle,
@@ -236,7 +238,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
             playing_state
                 .track
                 .stop()
-                .map_err(crate::Error::SongbirdTrack)?;
+                .map_err(crate::Error::SongbirdControl)?;
         }
         Ok(())
     }
@@ -246,7 +248,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
             playing_state
                 .track
                 .pause()
-                .map_err(crate::Error::SongbirdTrack)?;
+                .map_err(crate::Error::SongbirdControl)?;
             playing_state.is_paused = true;
         }
         Ok(())
@@ -257,7 +259,7 @@ impl<'handle> GuildSpeakerRef<'handle> {
             playing_state
                 .track
                 .play()
-                .map_err(crate::Error::SongbirdTrack)?;
+                .map_err(crate::Error::SongbirdControl)?;
             playing_state.is_paused = false;
         }
         Ok(())

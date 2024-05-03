@@ -1,4 +1,5 @@
 use crate::message::time_bar::format_time_bar;
+use serenity::all::CreateEmbed;
 use serenity::model::prelude::*;
 
 mod action_updater;
@@ -31,18 +32,14 @@ impl Message {
         }
     }
 
-    pub fn create_embed<'e>(
-        &self,
-        embed: &'e mut serenity::builder::CreateEmbed,
-        config: &crate::config::Config,
-    ) -> &'e mut serenity::builder::CreateEmbed {
+    pub fn create_embed(&self, config: &crate::config::Config) -> CreateEmbed {
         match self {
             Message::Action {
                 message,
                 voice_channel,
                 ..
-            } => message.create_embed(embed, config, *voice_channel),
-            Message::Response { message, .. } => message.create_embed(embed, config),
+            } => message.create_embed(config, *voice_channel),
+            Message::Response { message, .. } => message.create_embed(config),
         }
     }
 }
@@ -168,8 +165,8 @@ impl ActionMessage {
                 duration_seconds,
                 ..
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
-                let user_id_string = user_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
+                let user_id_string = user_id.get().to_string();
                 let time_string = format_time_bar(config, *time_seconds, *duration_seconds);
 
                 config.get_message(
@@ -191,7 +188,7 @@ impl ActionMessage {
                 duration_seconds,
                 ..
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 let time_string = format_time_bar(config, *time_seconds, *duration_seconds);
 
                 config.get_message(
@@ -208,7 +205,7 @@ impl ActionMessage {
                 song_title,
                 song_url,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
 
                 config.get_message(
                     "action.played",
@@ -220,7 +217,7 @@ impl ActionMessage {
                 )
             }
             ActionMessage::Finished => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "action.finished",
                     &[("voice_channel_id", &channel_id_string)],
@@ -231,8 +228,8 @@ impl ActionMessage {
                 song_url,
                 user_id,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
-                let user_id_string = user_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
+                let user_id_string = user_id.get().to_string();
                 config.get_message(
                     "response.paused",
                     &[
@@ -248,8 +245,8 @@ impl ActionMessage {
                 song_url,
                 user_id,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
-                let user_id_string = user_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
+                let user_id_string = user_id.get().to_string();
                 config.get_message(
                     "response.stopped",
                     &[
@@ -261,7 +258,7 @@ impl ActionMessage {
                 )
             }
             ActionMessage::NoSpeakersError => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "action.no_speakers_error",
                     &[("voice_channel_id", &channel_id_string)],
@@ -299,25 +296,24 @@ impl ActionMessage {
         }
     }
 
-    pub fn create_embed<'e>(
+    pub fn create_embed(
         &self,
-        embed: &'e mut serenity::builder::CreateEmbed,
         config: &crate::config::Config,
         voice_channel_id: ChannelId,
-    ) -> &'e mut serenity::builder::CreateEmbed {
-        embed
+    ) -> CreateEmbed {
+        let color = if self.is_error() {
+            config.error_embed_color
+        } else {
+            config.action_embed_color
+        };
+
+        let embed = CreateEmbed::new()
             .description(self.to_string(config, voice_channel_id))
-            .color(if self.is_error() {
-                config.error_embed_color
-            } else {
-                config.action_embed_color
-            });
-
-        if let Some(thumbnail) = self.get_thumbnail() {
-            embed.thumbnail(thumbnail);
+            .color(color);
+        match self.get_thumbnail() {
+            Some(thumbnail) => embed.thumbnail(thumbnail),
+            None => embed,
         }
-
-        embed
     }
 }
 
@@ -370,7 +366,7 @@ impl ResponseMessage {
                 old_song_url,
                 voice_channel_id,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "response.replace_skipped",
                     &[
@@ -388,8 +384,8 @@ impl ResponseMessage {
                 voice_channel_id,
                 user_id,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
-                let user_id_string = user_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
+                let user_id_string = user_id.get().to_string();
                 config.get_message(
                     "response.skipped",
                     &[
@@ -406,7 +402,7 @@ impl ResponseMessage {
                 voice_channel_id,
                 count,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 if *count == 1 {
                     config.get_message(
                         "response.skip_more_votes_needed.singular",
@@ -433,7 +429,7 @@ impl ResponseMessage {
                 voice_channel_id,
                 count,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 if *count == 1 {
                     config.get_message(
                         "response.stop_more_votes_needed.singular",
@@ -464,7 +460,7 @@ impl ResponseMessage {
                 song_url,
                 voice_channel_id,
             } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "response.skip_already_voted_error",
                     &[
@@ -475,28 +471,28 @@ impl ResponseMessage {
                 )
             }
             ResponseMessage::StopAlreadyVotedError { voice_channel_id } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "response.stop_already_voted_error",
                     &[("voice_channel_id", &channel_id_string)],
                 )
             }
             ResponseMessage::NothingIsQueuedError { voice_channel_id } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "response.nothing_is_queued_error",
                     &[("voice_channel_id", &channel_id_string)],
                 )
             }
             ResponseMessage::NothingIsPlayingError { voice_channel_id } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "response.nothing_is_playing_error",
                     &[("voice_channel_id", &channel_id_string)],
                 )
             }
             ResponseMessage::AlreadyPlayingError { voice_channel_id } => {
-                let channel_id_string = voice_channel_id.0.to_string();
+                let channel_id_string = voice_channel_id.get().to_string();
                 config.get_message(
                     "response.already_playing_error",
                     &[("voice_channel_id", &channel_id_string)],
@@ -527,12 +523,8 @@ impl ResponseMessage {
         }
     }
 
-    pub fn create_embed<'e>(
-        &self,
-        embed: &'e mut serenity::builder::CreateEmbed,
-        config: &crate::config::Config,
-    ) -> &'e mut serenity::builder::CreateEmbed {
-        embed
+    pub fn create_embed(&self, config: &crate::config::Config) -> CreateEmbed {
+        CreateEmbed::new()
             .color(if self.is_error() {
                 config.error_embed_color
             } else {

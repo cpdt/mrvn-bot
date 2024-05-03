@@ -1,6 +1,8 @@
 use crate::config::Config;
 use crate::message::ActionMessage;
+use serenity::all::EditMessage;
 use serenity::model::id::{ChannelId, MessageId};
+use serenity::prelude::Context;
 use std::sync::Arc;
 
 pub struct ActionUpdater {
@@ -9,7 +11,7 @@ pub struct ActionUpdater {
     voice_channel: ChannelId,
     is_response: bool,
     config: Arc<Config>,
-    http: Arc<serenity::http::Http>,
+    ctx: Context,
 }
 
 impl ActionUpdater {
@@ -19,7 +21,7 @@ impl ActionUpdater {
         voice_channel: ChannelId,
         is_response: bool,
         config: Arc<Config>,
-        http: Arc<serenity::http::Http>,
+        ctx: Context,
     ) -> Self {
         ActionUpdater {
             channel_id,
@@ -27,7 +29,7 @@ impl ActionUpdater {
             voice_channel,
             is_response,
             config,
-            http,
+            ctx,
         }
     }
 
@@ -38,11 +40,12 @@ impl ActionUpdater {
     pub async fn update(&self, action_message: ActionMessage) {
         let maybe_err = self
             .channel_id
-            .edit_message(&self.http, self.message_id, |message| {
-                message.embed(|embed| {
-                    action_message.create_embed(embed, &self.config, self.voice_channel)
-                })
-            })
+            .edit_message(
+                &self.ctx,
+                self.message_id,
+                EditMessage::new()
+                    .embed(action_message.create_embed(&self.config, self.voice_channel)),
+            )
             .await;
 
         if let Err(why) = maybe_err {
@@ -53,7 +56,7 @@ impl ActionUpdater {
     pub async fn delete(self) {
         let maybe_err = self
             .channel_id
-            .delete_message(&self.http, self.message_id)
+            .delete_message(&self.ctx.http, self.message_id)
             .await;
 
         if let Err(why) = maybe_err {

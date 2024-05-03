@@ -46,7 +46,6 @@ pub struct Config {
     pub progress_min_update_secs: f64,
     pub progress_max_update_secs: f64,
 
-    pub scan_timeout_secs: f64,
     pub buffer_capacity_kb: usize,
 
     pub search_prefix: String,
@@ -110,7 +109,6 @@ impl Config {
             host_blocklist: &self.host_blocklist,
             ytdl_name: &self.ytdl.name,
             ytdl_args: &self.ytdl.args,
-            scan_timeout_secs: self.scan_timeout_secs,
             buffer_capacity_kb: self.buffer_capacity_kb,
         }
     }

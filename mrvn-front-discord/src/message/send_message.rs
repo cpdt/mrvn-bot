@@ -4,6 +4,10 @@ use crate::message::{ActionUpdater, Message};
 use crate::queued_song::QueuedSong;
 use futures::prelude::*;
 use mrvn_model::{ChannelActionMessage, GuildModel};
+use serenity::all::{
+    CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
+    EditInteractionResponse,
+};
 use serenity::model::prelude::ChannelId;
 use serenity::{client::Context, model::prelude::*};
 use std::sync::Arc;
@@ -12,7 +16,7 @@ use std::sync::Arc;
 pub enum SendMessageDestination<'interaction> {
     Channel(ChannelId),
     Interaction {
-        interaction: &'interaction interaction::application_command::ApplicationCommandInteraction,
+        interaction: &'interaction CommandInteraction,
         is_edit: bool,
     },
 }
@@ -68,26 +72,26 @@ pub async fn send_messages(
             ) => {
                 let channel_message = if is_edit {
                     interaction
-                        .edit_original_interaction_response(&ctx.http, |response| {
-                            response.embed(|embed| first_message.create_embed(embed, config))
-                        })
+                        .edit_response(
+                            ctx,
+                            EditInteractionResponse::new()
+                                .embed(first_message.create_embed(config)),
+                        )
                         .await
                         .map_err(crate::error::Error::Serenity)?
                 } else {
                     interaction
-                        .create_interaction_response(&ctx.http, |response| {
-                            response
-                                .kind(
-                                    interaction::InteractionResponseType::ChannelMessageWithSource,
-                                )
-                                .interaction_response_data(|data| {
-                                    data.embed(|embed| first_message.create_embed(embed, config))
-                                })
-                        })
+                        .create_response(
+                            ctx,
+                            CreateInteractionResponse::Message(
+                                CreateInteractionResponseMessage::new()
+                                    .embed(first_message.create_embed(config)),
+                            ),
+                        )
                         .await
                         .map_err(crate::error::Error::Serenity)?;
                     interaction
-                        .get_interaction_response(&ctx.http)
+                        .get_response(ctx)
                         .await
                         .map_err(crate::error::Error::Serenity)?
                 };
@@ -106,7 +110,7 @@ pub async fn send_messages(
                                 voice_channel,
                                 true,
                                 config.clone(),
-                                ctx.http.clone(),
+                                ctx.clone(),
                             )),
                         })
                     }
@@ -129,9 +133,10 @@ pub async fn send_messages(
     // action message, keep track of its ID so we can record it later.
     let remaining_messages_future = future::try_join_all(messages_iter.map(|message| async move {
         let channel_message = message_channel_id
-            .send_message(&ctx.http, |create_message| {
-                create_message.embed(|embed| message.create_embed(embed, config))
-            })
+            .send_message(
+                ctx,
+                CreateMessage::new().embed(message.create_embed(config)),
+            )
             .await
             .map_err(crate::error::Error::Serenity)?;
 
@@ -149,7 +154,7 @@ pub async fn send_messages(
                         voice_channel,
                         false,
                         config.clone(),
-                        ctx.http.clone(),
+                        ctx.clone(),
                     )),
                 }))
             }
