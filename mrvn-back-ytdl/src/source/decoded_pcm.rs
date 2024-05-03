@@ -8,6 +8,7 @@ use std::mem::size_of;
 use symphonia::core::audio::{AudioBuffer, AudioBufferRef, Signal};
 use symphonia::core::codecs::Decoder;
 use symphonia::core::conv::IntoSample;
+use symphonia::core::errors::{Error as SymphoniaError, Result as SymphoniaResult};
 use symphonia::core::formats::{FormatReader, Packet};
 use symphonia::core::sample::Sample;
 
@@ -168,13 +169,9 @@ impl DecoderSource {
         }
     }
 
-    fn next_packet(&mut self) -> io::Result<Packet> {
+    fn next_packet(&mut self) -> SymphoniaResult<Packet> {
         loop {
-            let packet = self.reader.next_packet().map_err(|err| {
-                log::error!("While decoding: {}", err);
-                io::Error::new(io::ErrorKind::Other, err)
-            })?;
-
+            let packet = self.reader.next_packet()?;
             if packet.track_id() == self.track_id {
                 return Ok(packet);
             }
@@ -183,7 +180,20 @@ impl DecoderSource {
 
     fn next_decode_buffer(&mut self) -> io::Result<AudioBufferRef> {
         loop {
-            let packet = self.next_packet()?;
+            let packet = match self.next_packet() {
+                Ok(packet) => packet,
+                Err(SymphoniaError::ResetRequired) => {
+                    log::trace!("While demuxing: decoder must be reset");
+                    self.decoder.reset();
+                    continue;
+                }
+                Err(err) => {
+                    // Treat all other kinds of errors as fatal, they normally indicate we can't
+                    // recover.
+                    log::error!("Error while demuxing: {}", err);
+                    return Err(io::Error::new(io::ErrorKind::Other, err));
+                }
+            };
 
             match self.decoder.decode(&packet) {
                 Ok(_) => return Ok(self.decoder.last_decoded()),

@@ -73,7 +73,7 @@ fn segment_list_stream(
             //  - If this is the first playlist, filter all segments until the first one that ends
             //    before three target durations from the end of the file
             //    ^ only if the playlist hasn't ended (to support non-live streams)
-            let min_end_secs = playlist_duration_secs - media_playlist.target_duration * 3.;
+            let min_end_secs = playlist_duration_secs - media_playlist.target_duration as f32 * 3.;
             let filtered_segments = timed_segments
                 .filter(move |(segment_sequence, segment, segment_start_time)| match last_seen_sequence {
                     Some(last_seen_sequence) => *segment_sequence > last_seen_sequence,
@@ -108,7 +108,7 @@ fn segment_list_stream(
                     //    was loaded, the client MUST wait for at least the target duration
                     //    before attempting to reload the Playlist file again, measured from
                     //    the last time the client began loading the Playlist file.
-                    request_instant + Duration::from_secs_f32(media_playlist.target_duration)
+                    request_instant + Duration::from_secs(media_playlist.target_duration)
                 }
                 _ => {
                     // No new segments.
@@ -118,7 +118,7 @@ fn segment_list_stream(
                     //    If the client reloads a Playlist file and finds that it has not
                     //    changed, then it MUST wait for a period of one-half the target
                     //    duration before retrying.
-                    request_instant + Duration::from_secs_f32(media_playlist.target_duration / 2.)
+                    request_instant + Duration::from_secs_f32(media_playlist.target_duration as f32 / 2.)
                 }
             };
 
