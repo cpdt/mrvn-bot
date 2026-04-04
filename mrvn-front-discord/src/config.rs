@@ -103,7 +103,7 @@ impl Config {
             .into_owned()
     }
 
-    pub fn get_play_config(&self) -> PlayConfig {
+    pub fn get_play_config(&self) -> PlayConfig<'_> {
         PlayConfig {
             search_prefix: &self.search_prefix,
             host_blocklist: &self.host_blocklist,

@@ -15,6 +15,7 @@ use symphonia::core::probe::Hint;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncSeek, BufReader, ReadBuf};
 use tokio::process::Command as TokioCommand;
 use tokio_util::io::StreamReader;
+use url::Url;
 use uuid::Uuid;
 
 pub struct Song {
@@ -106,13 +107,40 @@ impl Song {
             Err(_) => Cow::Owned(format!("{}:{}", config.search_prefix, &term)),
         };
 
+        let mut safe_url = String::new();
+
+        // handling youtube playlist and video urls
+        if ytdl_url.contains("https://www.youtube.com") {
+            let parsed = Url::parse(&ytdl_url);
+            match parsed {
+                Ok(url) => {
+                    let params: Vec<_> = url.query_pairs().collect();
+                    safe_url = format!("https://youtube.com/watch?{}={}", params[0].0, params[0].1)
+                }
+                Err(_) => return Err(Error::UnsupportedUrl),
+            }
+        }
+
+        if ytdl_url.contains("https://youtu.be") {
+            let parsed = Url::parse(&ytdl_url);
+            match parsed {
+                Ok(url) => {
+                    safe_url = format!(
+                        "https://youtube.com/watch?v={}",
+                        url.path().replace("/", "")
+                    )
+                }
+                Err(_) => return Err(Error::UnsupportedUrl),
+            }
+        }
+
         let mut ytdl = TokioCommand::new(config.ytdl_name)
             .args(config.ytdl_args)
             .args([
                 "--dump-json",
                 "--ignore-config",
                 "--no-warnings",
-                ytdl_url.as_ref(),
+                safe_url.as_ref(),
                 "-o",
                 "-",
             ])
