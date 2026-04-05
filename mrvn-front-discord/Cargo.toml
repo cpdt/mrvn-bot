@@ -1,19 +1,21 @@
 [package]
 name = "mrvn-front-discord"
 version = "1.0.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 mrvn-model = { path = "../mrvn-model" }
 mrvn-back-ytdl = { path = "../mrvn-back-ytdl" }
 futures = "0.3"
-lazy_static = "1.4"
+lazy_static = "1.5"
 log = "0.4"
 pretty_env_logger = "0.5"
-regex = "1.9"
+regex = "1"
 serde = "1.0"
 serde_json = "1.0"
-uuid = "1.4"
+uuid = "1"
+tokio-cron-scheduler = "0.15"
+rustls = { version = "0.23", features = ["ring"] }
 
 [dependencies.serenity]
 version = "0.12"
@@ -21,5 +23,5 @@ default-features = false
 features = ["cache", "client", "gateway", "rustls_backend", "model", "voice"]
 
 [dependencies.tokio]
-version = "1.32"
+version = "1"
 features = ["macros", "rt-multi-thread"]

@@ -1,15 +1,15 @@
 use adts_reader::{
-    AdtsConsumer, AdtsParseError, AdtsParser, AudioObjectType, ChannelConfiguration, MpegVersion,
-    Originality, ProtectionIndicator, SamplingFrequency,
+    AdtsConsumer, AdtsParseError, AdtsParser, AudioObjectType, BufferFullness,
+    ChannelConfiguration, MpegVersion, Originality, ProtectionIndicator, SamplingFrequencyIndex,
 };
 use mpeg2ts_reader::demultiplex::{Demultiplex, DemuxContext, FilterChangeset, FilterRequest};
 use mpeg2ts_reader::pes::PesHeader;
-use mpeg2ts_reader::{demultiplex, packet_filter_switch, pes, psi, StreamType};
+use mpeg2ts_reader::{StreamType, demultiplex, packet_filter_switch, pes, psi};
 use std::collections::VecDeque;
 use std::io;
 use std::io::Read;
 use symphonia::core::audio::{Channels, Layout};
-use symphonia::core::codecs::{CodecParameters, CODEC_TYPE_AAC};
+use symphonia::core::codecs::{CODEC_TYPE_AAC, CodecParameters};
 use symphonia::core::errors::SeekErrorKind;
 use symphonia::core::formats::{
     Cue, FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo, Track,
@@ -92,7 +92,7 @@ impl DemuxContext for ReadAudioDemuxContext {
             }
             // Handle ADTS streams.
             FilterRequest::ByStream {
-                stream_type: StreamType::Adts,
+                stream_type: StreamType::ADTS,
                 pmt,
                 stream_info,
                 ..
@@ -243,6 +243,9 @@ impl pes::ElementaryStreamConsumer<ReadAudioDemuxContext> for AdtsElementaryStre
                     Err(AdtsParseError::BadSyncWord) => {
                         Err(symphonia::core::errors::Error::DecodeError("bad sync word"))
                     }
+                    Err(AdtsParseError::BadSamplingFrequency) => Err(
+                        symphonia::core::errors::Error::DecodeError("bad sampling frequency"),
+                    ),
                 }),
         );
     }
@@ -269,33 +272,33 @@ impl AdtsConsumer for AdtsDataConsumer {
         _mpeg_version: MpegVersion,
         _protection: ProtectionIndicator,
         _aot: AudioObjectType,
-        freq: SamplingFrequency,
+        freq: SamplingFrequencyIndex,
         _private_bit: u8,
         channel_config: ChannelConfiguration,
         _originality: Originality,
         _home: u8,
     ) {
         let channels = match channel_config {
-            ChannelConfiguration::ObjectTypeSpecificConfig => None,
-            ChannelConfiguration::Mono => Some(Channels::FRONT_CENTRE),
-            ChannelConfiguration::Stereo => Some(Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
-            ChannelConfiguration::Three => {
+            ChannelConfiguration::OBJECT_TYPE_SPECIFIC_CONFIG => None,
+            ChannelConfiguration::MONO => Some(Channels::FRONT_CENTRE),
+            ChannelConfiguration::STEREO => Some(Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
+            ChannelConfiguration::THREE => {
                 Some(Channels::FRONT_CENTRE | Channels::FRONT_LEFT | Channels::FRONT_RIGHT)
             }
-            ChannelConfiguration::Four => Some(
+            ChannelConfiguration::FOUR => Some(
                 Channels::FRONT_CENTRE
                     | Channels::FRONT_LEFT
                     | Channels::FRONT_RIGHT
                     | Channels::REAR_CENTRE,
             ),
-            ChannelConfiguration::Five => Some(
+            ChannelConfiguration::FIVE => Some(
                 Channels::FRONT_CENTRE
                     | Channels::FRONT_LEFT
                     | Channels::FRONT_RIGHT
                     | Channels::REAR_LEFT
                     | Channels::REAR_RIGHT,
             ),
-            ChannelConfiguration::FiveOne => Some(
+            ChannelConfiguration::FIVE_ONE => Some(
                 Channels::FRONT_CENTRE
                     | Channels::FRONT_LEFT
                     | Channels::FRONT_RIGHT
@@ -303,7 +306,7 @@ impl AdtsConsumer for AdtsDataConsumer {
                     | Channels::REAR_RIGHT
                     | Channels::LFE1,
             ),
-            ChannelConfiguration::SevenOne => Some(
+            ChannelConfiguration::SEVEN_ONE => Some(
                 Channels::FRONT_CENTRE
                     | Channels::FRONT_LEFT
                     | Channels::FRONT_RIGHT
@@ -313,16 +316,18 @@ impl AdtsConsumer for AdtsDataConsumer {
                     | Channels::REAR_RIGHT
                     | Channels::LFE1,
             ),
+            _ => None,
         };
         let channel_layout = match channel_config {
-            ChannelConfiguration::ObjectTypeSpecificConfig => None,
-            ChannelConfiguration::Mono => Some(Layout::Mono),
-            ChannelConfiguration::Stereo => Some(Layout::Stereo),
-            ChannelConfiguration::Three => None,
-            ChannelConfiguration::Four => None,
-            ChannelConfiguration::Five => None,
-            ChannelConfiguration::FiveOne => Some(Layout::FivePointOne),
-            ChannelConfiguration::SevenOne => None,
+            ChannelConfiguration::OBJECT_TYPE_SPECIFIC_CONFIG => None,
+            ChannelConfiguration::MONO => Some(Layout::Mono),
+            ChannelConfiguration::STEREO => Some(Layout::Stereo),
+            ChannelConfiguration::THREE => None,
+            ChannelConfiguration::FOUR => None,
+            ChannelConfiguration::FIVE => None,
+            ChannelConfiguration::FIVE_ONE => Some(Layout::FivePointOne),
+            ChannelConfiguration::SEVEN_ONE => None,
+            _ => None,
         };
 
         self.codec_params = Some(CodecParameters {
@@ -348,7 +353,7 @@ impl AdtsConsumer for AdtsDataConsumer {
         });
     }
 
-    fn payload(&mut self, _buffer_fullness: u16, number_of_blocks: u8, buf: &[u8]) {
+    fn payload(&mut self, _buffer_fullness: BufferFullness, number_of_blocks: u8, buf: &[u8]) {
         self.buffers.push(Ok(AdtsBuffer {
             block_count: number_of_blocks,
             data: buf.into(),
