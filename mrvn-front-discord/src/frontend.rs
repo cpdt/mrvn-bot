@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::message::{
-    send_messages, ActionMessage, Message, ResponseMessage, SendMessageDestination,
+    ActionMessage, Message, ResponseMessage, SendMessageDestination, send_messages,
 };
 use crate::playing_message::build_playing_message;
 use crate::queued_message::build_queued_message;
@@ -552,7 +552,7 @@ impl Frontend {
                 return Ok(vec![Message::Response {
                     message: ResponseMessage::NoMatchingSongsError,
                     delegate: None,
-                }])
+                }]);
             }
         };
 
@@ -677,7 +677,9 @@ impl Frontend {
         match guild_speakers_ref.find_active_in_channel(channel_id) {
             Some((guild_speaker, active_metadata)) => {
                 if guild_speaker.is_paused() {
-                    log::trace!("Found a paused speaker in the user's voice channel, playback will remain paused");
+                    log::trace!(
+                        "Found a paused speaker in the user's voice channel, playback will remain paused"
+                    );
                     Ok(vec![Message::Response {
                         message: ResponseMessage::NothingIsPlayingError {
                             voice_channel_id: channel_id,
@@ -685,7 +687,9 @@ impl Frontend {
                         delegate: None,
                     }])
                 } else {
-                    log::trace!("Found an unpaused speaker in the user's voice channel, playback will be paused");
+                    log::trace!(
+                        "Found an unpaused speaker in the user's voice channel, playback will be paused"
+                    );
                     guild_speaker
                         .pause()
                         .map_err(crate::error::Error::Backend)?;
@@ -1057,7 +1061,7 @@ impl Frontend {
                             next_metadata,
                         )
                         .await,
-                    ])
+                    ]);
                 }
                 Err((new_ref, why)) => {
                     log::error!("Error while continuing playback: {}", why);

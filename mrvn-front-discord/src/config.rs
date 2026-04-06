@@ -1,6 +1,6 @@
 use mrvn_back_ytdl::PlayConfig;
-use serde::de::Error;
 use serde::Deserialize;
+use serde::de::Error;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
