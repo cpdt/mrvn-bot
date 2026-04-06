@@ -14,7 +14,14 @@
   "host_blocklist": [],
   "ytdl": {
     "name": "youtube-dl",
-    "args": ["-f", "webm[abr>0][asr=48000]/bestaudio[acodec!=none]/bestaudio/best", "-R", "infinite"]
+    "args": [
+      "--js-runtimes",
+      "deno:/usr/local/bin/deno",
+      "-f",
+      "webm[abr>0][asr=48000]/bestaudio[acodec!=none]/bestaudio/best",
+      "-R",
+      "infinite"
+    ]
   },
   "command_bot": {
     "token": "Place a bot token here.",
@@ -34,7 +41,6 @@
     "time": "{minutes}:{seconds}",
     "duration.unknown": "?",
     "time_and_duration": "{time} / {duration}",
-
     "action.playing": ":robot: :loud_sound: Playing [{song_title}](<{song_url}>) in <#{voice_channel_id}> (added by <@{user_id}>)\n\n`{time}`",
     "action.playing_response": ":robot: :loud_sound: Playing [{song_title}](<{song_url}>) in <#{voice_channel_id}>\n\n`{time}`",
     "action.played": ":robot: :loud_sound: Played [{song_title}](<{song_url}>) in <#{voice_channel_id}>",

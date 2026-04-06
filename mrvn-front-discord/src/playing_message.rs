@@ -1,5 +1,5 @@
 use crate::frontend::Frontend;
-use crate::message::time_bar::{format_time, AFTER_PROGRESS_BAR, BEFORE_PROGRESS_BAR, MAX_COLUMNS};
+use crate::message::time_bar::{AFTER_PROGRESS_BAR, BEFORE_PROGRESS_BAR, MAX_COLUMNS, format_time};
 use crate::message::{ActionDelegate, ActionMessage, ActionUpdater, Message};
 use futures::future::{AbortHandle, Abortable};
 use mrvn_back_ytdl::{GuildSpeakerRef, SongMetadata};

@@ -1,6 +1,6 @@
 use crate::input::{hls_chunks, remote_file_chunks};
 use crate::{Error, HTTP_CLIENT};
-use futures::{future, TryStreamExt};
+use futures::{TryStreamExt, future};
 use serenity::async_trait;
 use serenity::model::prelude::UserId;
 use songbird::input::core::io::MediaSource;
@@ -11,10 +11,10 @@ use std::io::SeekFrom;
 use std::pin::Pin;
 use std::process::Stdio;
 use std::task::{Context, Poll};
-use symphonia::core::probe::Hint;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncSeek, BufReader, ReadBuf};
 use tokio::process::Command as TokioCommand;
 use tokio_util::io::StreamReader;
+use url::Url;
 use uuid::Uuid;
 
 pub struct Song {
@@ -106,13 +106,40 @@ impl Song {
             Err(_) => Cow::Owned(format!("{}:{}", config.search_prefix, &term)),
         };
 
+        let mut safe_url = ytdl_url.to_string();
+
+        // handling youtube playlist and video urls
+        if ytdl_url.contains("https://www.youtube.com") {
+            let parsed = Url::parse(&ytdl_url);
+            match parsed {
+                Ok(url) => {
+                    let params: Vec<_> = url.query_pairs().collect();
+                    safe_url = format!("https://youtube.com/watch?{}={}", params[0].0, params[0].1)
+                }
+                Err(_) => return Err(Error::UnsupportedUrl),
+            }
+        }
+
+        if ytdl_url.contains("https://youtu.be") {
+            let parsed = Url::parse(&ytdl_url);
+            match parsed {
+                Ok(url) => {
+                    safe_url = format!(
+                        "https://youtube.com/watch?v={}",
+                        url.path().replace("/", "")
+                    )
+                }
+                Err(_) => return Err(Error::UnsupportedUrl),
+            }
+        }
+
         let mut ytdl = TokioCommand::new(config.ytdl_name)
             .args(config.ytdl_args)
             .args([
                 "--dump-json",
                 "--ignore-config",
                 "--no-warnings",
-                ytdl_url.as_ref(),
+                safe_url.as_ref(),
                 "-o",
                 "-",
             ])
@@ -245,18 +272,6 @@ async fn create_source(
         || maybe_mime_type == Some("application/vnd.apple.mpegurl")
         || maybe_mime_type == Some("audio/mpegurl");
 
-    let mut hint = Hint::new();
-
-    if is_mpeg_stream {
-        // todo: use hint of file linked in m3u8
-        // m3u8 stream will probably contain MPEG-TS files
-        hint.with_extension("ts");
-        hint.mime_type("video/mp2t");
-    } else {
-        maybe_extension.map(|extension| hint.with_extension(extension));
-        maybe_mime_type.map(|mime_type| hint.mime_type(mime_type));
-    }
-
     // Start streaming chunks from the remote
     let adapter_stream = if is_mpeg_stream {
         let stream = hls_chunks(request_url, initial_response, request_builder);
@@ -276,7 +291,6 @@ async fn create_source(
 
     let audio_stream = AudioStream {
         input: Box::new(adapter_stream) as Box<dyn MediaSource>,
-        hint: Some(hint),
     };
     Ok(Input::Live(LiveInput::Raw(audio_stream), None))
 }

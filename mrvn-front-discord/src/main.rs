@@ -1,5 +1,5 @@
 use futures::prelude::*;
-use mrvn_back_ytdl::{get_ytdl_version, SpeakerInit};
+use mrvn_back_ytdl::{SpeakerInit, get_ytdl_version};
 use serenity::{model::prelude::*, prelude::*};
 use std::future::IntoFuture;
 use std::sync::Arc;
@@ -18,6 +18,13 @@ mod voice_handler;
 
 #[tokio::main]
 async fn main() {
+    // Must be called before any TLS usage (reqwest, serenity, songbird all use rustls).
+    // With both ring and aws-lc-rs features unified in the dep graph, rustls can't
+    // auto-select a provider, so we explicitly install ring.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     pretty_env_logger::init();
 
     let mut args = std::env::args();
