@@ -289,10 +289,10 @@ impl ActionMessage {
             ActionMessage::Playing { .. }
             | ActionMessage::PlayingResponse { .. }
             | ActionMessage::Played { .. }
-            | ActionMessage::Finished { .. }
+            | ActionMessage::Finished
             | ActionMessage::Paused { .. }
             | ActionMessage::Stopped { .. } => false,
-            ActionMessage::NoSpeakersError { .. } | ActionMessage::UnknownError => true,
+            ActionMessage::NoSpeakersError | ActionMessage::UnknownError => true,
         }
     }
 

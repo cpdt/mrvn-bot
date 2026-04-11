@@ -41,14 +41,14 @@ fn segment_list_stream(
                         .send()
                         .await
                         .and_then(reqwest::Response::error_for_status)
-                        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
+                        .map_err(io::Error::other)?
                 }
             };
 
             let response_bytes = response.bytes().await
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+                .map_err(io::Error::other)?;
             let media_playlist = parse_media_playlist_res(&response_bytes)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, MediaPlaylistParseError))?;
+                .map_err(|_| io::Error::other(MediaPlaylistParseError))?;
 
             let playlist_duration_secs: f32 = media_playlist.segments
                 .iter()
@@ -92,11 +92,10 @@ fn segment_list_stream(
 
             let refresh_instant = match (segments_with_expiry_time.first(), segments_with_expiry_time.last()) {
                 (Some(first_segment), Some(last_segment)) => {
-                    if let Some(last_seen_sequence) = last_seen_sequence {
-                        if last_seen_sequence + 1 < first_segment.sequence {
+                    if let Some(last_seen_sequence) = last_seen_sequence
+                        && last_seen_sequence + 1 < first_segment.sequence {
                             log::warn!("Discontinuity in HLS stream (sequence {} to {})", last_seen_sequence, first_segment.sequence);
                         }
-                    }
 
                     last_seen_sequence = Some(last_segment.sequence);
 

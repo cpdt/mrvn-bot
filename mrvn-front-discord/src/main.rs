@@ -88,6 +88,8 @@ async fn main() {
     .expect("Unable to register commands");
     log::info!("Finished registering application commands");
 
+    // This clippy error is a bit weird as `cleanup_loop_future` never resolves.
+    #[allow(clippy::result_large_err)]
     let cleanup_loop_future =
         cleanup_loop::cleanup_loop(frontend, command_client.cache.clone()).map(|_| Ok(()));
 

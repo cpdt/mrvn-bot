@@ -35,14 +35,12 @@ pub fn media_file_stream(
             async move {
                 let base_url = base_url.clone();
 
-                if let Some(Key { method, .. }) = &segment.key {
-                    if *method != KeyMethod::None {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
+                if let Some(Key { method, .. }) = &segment.key
+                    && *method != KeyMethod::None {
+                        return Err(io::Error::other(
                             EncryptionNotSupportedError,
                         ));
                     }
-                }
 
                 // todo: support range requests
                 // todo: support relative uri
@@ -50,7 +48,7 @@ pub fn media_file_stream(
 
                 let absolute_url = base_url
                     .join(&segment.uri)
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+                    .map_err(io::Error::other)?;
                 let builder = HTTP_CLIENT.get(absolute_url);
                 Ok(builder.send().map(Ok))
             }

@@ -1,6 +1,6 @@
 use crate::PlayConfig;
 use std::fmt::{Debug, Display, Formatter};
-use std::io::{Error, ErrorKind, Result};
+use std::io::{Error, Result};
 use std::process::ExitStatus;
 use tokio::process::Command;
 
@@ -28,9 +28,9 @@ pub async fn get_ytdl_version(config: &PlayConfig<'_>) -> Result<String> {
                 version_raw.truncate(version_raw.trim_end().len());
                 Ok(version_raw)
             }
-            Err(err) => Err(Error::new(ErrorKind::Other, err)),
+            Err(err) => Err(Error::other(err)),
         }
     } else {
-        Err(Error::new(ErrorKind::Other, StatusCodeError(ytdl.status)))
+        Err(Error::other(StatusCodeError(ytdl.status)))
     }
 }

@@ -258,7 +258,7 @@ async fn create_source(
 
     let maybe_extension = request_url
         .path_segments()
-        .and_then(|segments| segments.last())
+        .and_then(|mut segments| segments.next_back())
         .and_then(|segment| segment.rfind('.').map(|idx| (segment, idx)))
         .map(|(segment, idx)| &segment[(idx + 1)..]);
 

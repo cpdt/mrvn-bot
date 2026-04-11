@@ -110,8 +110,8 @@ impl Frontend {
                 _ = rx.fuse() => false,
                 _ = tokio::time::sleep(Duration::from_millis(SEND_WORKING_TIMEOUT_MS)).fuse() => true,
             );
-            if show_deferred_message {
-                if let Err(why) = command
+            if show_deferred_message
+                && let Err(why) = command
                     .create_response(
                         ctx,
                         CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new()),
@@ -120,7 +120,6 @@ impl Frontend {
                 {
                     log::error!("Error while sending deferred message: {}", why);
                 }
-            }
         };
 
         let send_future = async {

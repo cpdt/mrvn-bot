@@ -55,7 +55,7 @@ pub fn remote_file_chunks(
                 .send()
                 .await
                 .and_then(reqwest::Response::error_for_status)
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+                .map_err(io::Error::other)?;
         }
     }
 }
