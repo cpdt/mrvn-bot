@@ -23,12 +23,6 @@ pub struct YtdlConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct SecretHighfive {
-    pub image_url: String,
-    pub timezone: String,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     #[serde(deserialize_with = "from_hex")]
     pub action_embed_color: u32,
