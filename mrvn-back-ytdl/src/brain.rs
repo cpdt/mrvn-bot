@@ -63,10 +63,10 @@ impl<'handle> BrainSpeakersRef<'handle> {
             if let (Some(current_channel_id), Some(metadata)) = (
                 guild_speaker.current_channel(),
                 guild_speaker.active_metadata(),
-            )
-                && current_channel_id == channel_id {
-                    return Some((guild_speaker, metadata));
-                }
+            ) && current_channel_id == channel_id
+            {
+                return Some((guild_speaker, metadata));
+            }
         }
         None
     }
@@ -77,9 +77,10 @@ impl<'handle> BrainSpeakersRef<'handle> {
     ) -> Option<(&mut GuildSpeakerRef<'handle>, SongMetadata)> {
         for guild_speaker in &mut self.guild_speaker_refs {
             if let Some(metadata) = guild_speaker.active_metadata()
-                && metadata.id == song_id {
-                    return Some((guild_speaker, metadata));
-                }
+                && metadata.id == song_id
+            {
+                return Some((guild_speaker, metadata));
+            }
         }
         None
     }

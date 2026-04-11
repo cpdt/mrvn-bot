@@ -117,9 +117,9 @@ impl Frontend {
                         CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new()),
                     )
                     .await
-                {
-                    log::error!("Error while sending deferred message: {}", why);
-                }
+            {
+                log::error!("Error while sending deferred message: {}", why);
+            }
         };
 
         let send_future = async {

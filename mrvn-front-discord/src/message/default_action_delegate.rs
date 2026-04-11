@@ -18,8 +18,9 @@ struct ActiveActionDelegate {
 impl Drop for ActiveActionDelegate {
     fn drop(&mut self) {
         if let Some(updater) = std::mem::take(&mut self.updater)
-            && !updater.is_response() {
-                tokio::task::spawn(updater.delete());
-            }
+            && !updater.is_response()
+        {
+            tokio::task::spawn(updater.delete());
+        }
     }
 }
