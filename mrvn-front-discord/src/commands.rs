@@ -34,6 +34,8 @@ pub async fn register_commands(
         CreateCommand::new("stop").description("Vote to skip the current song and stop playback."),
         CreateCommand::new("nowplaying")
             .description("View the current playing song and its progress."),
+        CreateCommand::new("queue")
+            .description("View the current queue in your voice channel."),
     ];
 
     match guild_id {
